@@ -3,14 +3,14 @@ use serde::Serialize;
 use std::env;
 
 #[derive(Serialize)]
-struct Body {
-    what: String,
+struct Body<'a> {
+    what: &'a str,
 }
 
 async fn webook(id: &str, message: &str) -> Result<()> {
     let url = format!("http://ha.kulak.us/api/webhook/{}", id);
     let body = Body {
-        what: String::from(message),
+        what: message,
     };
 
     let response = reqwest::Client::new()
@@ -32,6 +32,18 @@ async fn webook(id: &str, message: &str) -> Result<()> {
 pub async fn broadcast(message: &str) -> Result<()> {
     let id = env::var("BROADCAST")
         .expect("BROADCAST environmental variable not set");
+
+    println!("broadcasting {}", message);
+
+    webook(&id, message).await?;
+    Ok(())
+}
+
+pub async fn notify(message: &str) -> Result<()> {
+    let id = env::var("NOTIFY")
+        .expect("NOTIFY environmental variable not set");
+
+    println!("notifying {}", message);
 
     webook(&id, message).await?;
     Ok(())

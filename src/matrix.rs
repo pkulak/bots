@@ -1,6 +1,53 @@
-use matrix_sdk::{room::Room, ruma::events::{room::member::MemberEventContent, StrippedStateEvent}, Client, ClientConfig};
-use tokio::time::{sleep, Duration};
+use matrix_sdk::{Client, SyncSettings};
+use matrix_sdk::ClientConfig;
+use matrix_sdk::room::Joined;
+use matrix_sdk::room::Room;
+use matrix_sdk::ruma::events::room::member::MemberEventContent;
+use matrix_sdk::ruma::events::room::message::MessageEventContent;
+use matrix_sdk::ruma::events::room::message::MessageType;
+use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
+use matrix_sdk::ruma::events::StrippedStateEvent;
+use matrix_sdk::ruma::events::SyncMessageEvent;
 use reqwest::Url;
+use tokio::time;
+use tokio::time::Duration;
+
+pub async fn get_text_message(
+    event: SyncMessageEvent<MessageEventContent>,
+    room: Room
+) -> Option<(Joined, String)> {
+    if let Room::Joined(room) = room {
+        if let SyncMessageEvent {
+            content: MessageEventContent {
+                msgtype: MessageType::Text(TextMessageEventContent { body: msg_body, .. }),
+                ..
+            },
+            ..
+        } = event
+        {
+            Option::Some((room, msg_body))
+        } else {
+            Option::None
+        }
+    } else {
+        Option::None
+    }
+}
+
+pub async fn get_command<'a>(prefix: &str, message: &'a str) -> Option<&'a str> {
+    let lower_message = message.to_lowercase();
+    let lower_prefix = prefix.to_lowercase();
+
+    if lower_message.starts_with(&format!("{} ", lower_prefix)) {
+        return Some(&message[prefix.len() + 1..])
+    }
+
+    if lower_message.starts_with(&format!("{}. ", lower_prefix)) {
+        return Some(&message[prefix.len() + 2..])
+    }
+
+    Option::None
+}
 
 async fn on_room_invitation(
     room_member: StrippedStateEvent<MemberEventContent>,
@@ -21,7 +68,7 @@ async fn on_room_invitation(
             // https://github.com/matrix-org/synapse/issues/4345
             eprintln!("Failed to join room {} ({:?}), retrying in {}s", room.room_id(), err, delay);
 
-            sleep(Duration::from_secs(delay)).await;
+            time::sleep(Duration::from_secs(delay)).await;
             delay *= 2;
 
             if delay > 3600 {
@@ -50,6 +97,7 @@ pub async fn create_client(
 
     println!("logged in as {}", username);
 
+    client.sync_once(SyncSettings::default()).await.unwrap();
     client.register_event_handler(on_room_invitation).await;
 
     Ok(client)
