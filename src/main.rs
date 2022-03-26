@@ -9,6 +9,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(bot) = env::args().nth(1) {
         match bot.as_str() {
             "home" => bots::home::main().await?,
+            "money" => bots::money::main().await?,
             _ => {
                 println!("unknown bot: {}", bot);
                 return Ok(());

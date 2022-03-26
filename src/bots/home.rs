@@ -1,5 +1,3 @@
-use std::env;
-
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
@@ -9,17 +7,7 @@ use crate::matrix;
 use crate::webhook;
 
 pub async fn main() -> anyhow::Result<()> {
-    let username = env::var("USERNAME")
-        .expect("USERNAME environmental variable not set");
-
-    let password = env::var("PASSWORD")
-        .expect("PASSWORD environmental variable not set");
-
-    let homeserver = env::var("HOMESERVER")
-        .expect("HOMESERVER environmental variable not set");
-
-    let client = matrix::create_client("homebot", &homeserver, &username, &password)
-        .await?;
+    let client = matrix::create_client("homebot").await?;
 
     client.register_event_handler(on_room_message).await;
 

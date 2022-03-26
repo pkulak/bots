@@ -1,3 +1,4 @@
+use std::env;
 use matrix_sdk::{Client, SyncSettings};
 use matrix_sdk::ClientConfig;
 use matrix_sdk::room::Joined;
@@ -80,22 +81,26 @@ async fn on_room_invitation(
     }
 }
 
-pub async fn create_client(
-    bot_name: &str,
-    homeserver_url: &str,
-    username: &str,
-    password: &str
-) -> anyhow::Result<Client> {
-    let mut home = dirs::config_dir().expect("no config directory found");
-    home.push(bot_name);
+pub async fn create_client(bot_name: &str) -> anyhow::Result<Client> {
+    let username = env::var("USERNAME")
+        .expect("USERNAME environmental variable not set");
 
-    println!("saving configuration to {:?}", home);
+    let password = env::var("PASSWORD")
+        .expect("PASSWORD environmental variable not set");
 
-    let client_config = ClientConfig::new().store_path(home);
-    let homeserver_url = Url::parse(homeserver_url).expect("invalid homeserver url");
+    let homeserver = env::var("HOMESERVER")
+        .expect("HOMESERVER environmental variable not set");
+
+    let mut config = dirs::config_dir().expect("no config directory found");
+    config.push(bot_name);
+
+    println!("saving configuration to {:?}", config);
+
+    let client_config = ClientConfig::new().store_path(config);
+    let homeserver_url = Url::parse(&homeserver).expect("invalid homeserver url");
     let client = Client::new_with_config(homeserver_url, client_config).unwrap();
 
-    client.login(username, password, None, Some(bot_name)).await?;
+    client.login(&username, &password, None, Some(bot_name)).await?;
 
     println!("logged in as {}", username);
 
