@@ -86,8 +86,10 @@ pub async fn create_client(
     username: &str,
     password: &str
 ) -> anyhow::Result<Client> {
-    let mut home = dirs::cache_dir().expect("no cache directory found");
+    let mut home = dirs::config_dir().expect("no config directory found");
     home.push(bot_name);
+
+    println!("saving configuration to {:?}", home);
 
     let client_config = ClientConfig::new().store_path(home);
     let homeserver_url = Url::parse(homeserver_url).expect("invalid homeserver url");
