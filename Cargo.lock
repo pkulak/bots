@@ -141,6 +141,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dirs",
+ "futures",
  "matrix-sdk",
  "reqwest",
  "rusqlite",

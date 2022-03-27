@@ -1,11 +1,14 @@
 use std::sync::{Arc, Mutex};
+
 use anyhow;
 use chrono;
+use futures::executor;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
 use matrix_sdk::SyncSettings;
 use rusqlite::{Connection, params};
+use tokio::task;
 
 use crate::matrix;
 
@@ -16,9 +19,10 @@ pub async fn main() -> anyhow::Result<()> {
     client.register_event_handler({
         move |event: SyncMessageEvent<MessageEventContent>, room: Room| {
             let bot = bot.clone();
-            async move {
-                bot.lock().unwrap().on_room_message(event, room);
-            }
+
+            task::spawn_blocking(move || {
+                executor::block_on(bot.lock().unwrap().on_room_message(event, room));
+            })
         }
     }).await;
 
@@ -48,13 +52,13 @@ impl Bot {
 
         let db_created = !db_file.exists();
 
-        let database = Bot { conn: Connection::open(db_file)? };
+        let bot = Bot { conn: Connection::open(db_file)? };
 
         if db_created {
-            database.init()?;
+            bot.init()?;
         }
 
-        Ok(database)
+        Ok(bot)
     }
 
     fn init(self: &Bot) -> anyhow::Result<()> {
@@ -111,5 +115,9 @@ impl Bot {
         self: &Bot,
         event: SyncMessageEvent<MessageEventContent>,
         room: Room
-    ) {}
+    ) {
+        if let Some((_, message)) = matrix::get_text_message(event, room).await {
+            println!("Got a message! {}", message)
+        }
+    }
 }
