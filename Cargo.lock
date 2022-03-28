@@ -151,6 +151,7 @@ dependencies = [
  "matrix-sdk",
  "reqwest",
  "rusqlite",
+ "rust_decimal",
  "rusty-money",
  "serde",
  "serde_json",

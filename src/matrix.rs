@@ -126,18 +126,42 @@ pub fn text_plain(message: &str) -> impl Into<AnyMessageEventContent> {
     AnyMessageEventContent::RoomMessage(MessageEventContent::text_plain(message))
 }
 
-pub fn normalize_user_id(sender: UserId, command: &str) -> anyhow::Result<UserId> {
+pub fn normalize_sender(sender: UserId, command: &str) -> anyhow::Result<UserId> {
     let sender = if command.len() > 0 {
-        if command.eq_ignore_ascii_case("dad") {
-            UserId::try_from("@phil:kulak.us")?
-        } else if command.eq_ignore_ascii_case("mom") {
-            UserId::try_from("@gwen:kulak.us")?
-        } else {
-            UserId::parse_with_server_name(command, <&ServerName>::try_from("kulak.us")?)?
-        }
+        create_user_id(command)?
     } else {
         sender
     };
 
     Ok(sender)
+}
+
+pub fn create_user_id(id: &str) -> anyhow::Result<UserId> {
+    let id = id.to_lowercase();
+    let id = id.trim();
+
+    let id = if id == "dad" {
+        UserId::try_from("@phil:kulak.us")?
+    } else if id == "mom" {
+        UserId::try_from("@gwen:kulak.us")?
+    } else {
+        UserId::parse_with_server_name(id, <&ServerName>::try_from("kulak.us")?)?
+    };
+
+    Ok(id)
+}
+
+pub fn pretty_user_id(user_id: &UserId) -> String {
+    let localpart = &mut user_id.localpart().to_string();
+
+    if let Some(s) = localpart.get_mut(0..1) {
+        s.make_ascii_uppercase()
+    };
+
+    localpart.to_string()
+}
+
+pub fn is_admin(user_id: &UserId) -> bool {
+    user_id.as_ref().eq_ignore_ascii_case("@phil:kulak.us") ||
+        user_id.as_ref().eq_ignore_ascii_case("@gwen:kulak.us")
 }
