@@ -9,24 +9,32 @@ use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
 use matrix_sdk::ruma::events::StrippedStateEvent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
+use matrix_sdk::ruma::events::AnyMessageEventContent;
+use matrix_sdk::ruma::{ServerName, UserId};
 use reqwest::Url;
 use tokio::time;
 use tokio::time::Duration;
 
 pub async fn get_text_message(
     event: SyncMessageEvent<MessageEventContent>,
-    room: Room
-) -> Option<(Joined, String)> {
+    room: Room,
+    client: Client
+) -> Option<(Joined, UserId, String)> {
     if let Room::Joined(room) = room {
         if let SyncMessageEvent {
             content: MessageEventContent {
-                msgtype: MessageType::Text(TextMessageEventContent { body: msg_body, .. }),
+                msgtype: MessageType::Text(TextMessageEventContent { body, .. }),
                 ..
             },
+            sender,
             ..
         } = event
         {
-            Option::Some((room, msg_body))
+            if sender.eq(&client.user_id().await.unwrap()) {
+                None
+            } else {
+                Some((room, sender, body))
+            }
         } else {
             Option::None
         }
@@ -39,12 +47,16 @@ pub async fn get_command<'a>(prefix: &str, message: &'a str) -> Option<&'a str> 
     let lower_message = message.to_lowercase();
     let lower_prefix = prefix.to_lowercase();
 
+    if lower_message.eq(&lower_prefix) {
+        return Some("")
+    }
+
     if lower_message.starts_with(&format!("{} ", lower_prefix)) {
-        return Some(&message[prefix.len() + 1..])
+        return Some(&message[prefix.len() + 1..].trim())
     }
 
     if lower_message.starts_with(&format!("{}. ", lower_prefix)) {
-        return Some(&message[prefix.len() + 2..])
+        return Some(&message[prefix.len() + 2..].trim())
     }
 
     Option::None
@@ -108,4 +120,24 @@ pub async fn create_client(bot_name: &str) -> anyhow::Result<Client> {
     client.register_event_handler(on_room_invitation).await;
 
     Ok(client)
+}
+
+pub fn text_plain(message: &str) -> impl Into<AnyMessageEventContent> {
+    AnyMessageEventContent::RoomMessage(MessageEventContent::text_plain(message))
+}
+
+pub fn normalize_user_id(sender: UserId, command: &str) -> anyhow::Result<UserId> {
+    let sender = if command.len() > 0 {
+        if command.eq_ignore_ascii_case("dad") {
+            UserId::try_from("@phil:kulak.us")?
+        } else if command.eq_ignore_ascii_case("mom") {
+            UserId::try_from("@gwen:kulak.us")?
+        } else {
+            UserId::parse_with_server_name(command, <&ServerName>::try_from("kulak.us")?)?
+        }
+    } else {
+        sender
+    };
+
+    Ok(sender)
 }
