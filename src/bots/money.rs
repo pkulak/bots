@@ -1,25 +1,32 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow;
-use chrono;
+use chrono::{Datelike, Duration, Local, TimeZone};
+use chrono_tz::US::Pacific;
 use futures::executor;
 use matrix_sdk::{Client, SyncSettings};
 use matrix_sdk::room::{Joined, Room};
+use matrix_sdk::ruma::{RoomId, UserId};
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
-use matrix_sdk::ruma::UserId;
 use rusqlite::{Connection, params};
 use rust_decimal::prelude::ToPrimitive;
 use rusty_money::{iso, Money};
 use tokio::task;
 
+use matrix::text_plain;
+
 use crate::matrix;
+
+const MAIN_ROOM: &str = "!hMPITSQBLFEleSJmVm:kulak.us";
 
 pub async fn main() -> anyhow::Result<()> {
     let client = matrix::create_client("moneybot").await?;
     let bot = Arc::new(Mutex::new(Bot::new()?));
 
     client.register_event_handler({
+        let bot = bot.clone();
+
         move |event: SyncMessageEvent<MessageEventContent>, room: Room, client: Client| {
             let bot = bot.clone();
 
@@ -30,8 +37,53 @@ pub async fn main() -> anyhow::Result<()> {
         }
     }).await;
 
+    // manage weekly allowance
+    task::spawn({
+        let client = client.clone();
+        let bot = bot.clone();
+
+        async move {
+            loop {
+                if let Err(e) = manage_allowance(&client, &bot).await {
+                    println!("Could not send allowance! {}", e);
+                }
+            }
+        }
+    });
+
     let settings = SyncSettings::default().token(client.sync_token().await.unwrap());
     client.sync(settings).await;
+
+    Ok(())
+}
+
+async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Result<()> {
+    let now = Pacific.timestamp_millis(chrono::Utc::now().timestamp_millis());
+
+    let next_friday = now + Duration::days(
+        5 - now.weekday().number_from_monday().to_i64().unwrap());
+
+    let next_friday = if next_friday < now {
+        next_friday + Duration::days(7)
+    } else {
+        next_friday
+    };
+
+    let duration = next_friday.signed_duration_since(Local::now());
+    println!("allowance due in {:?} days", duration.num_days());
+
+    tokio::time::sleep(duration.to_std().unwrap()).await;
+
+    let room_id = RoomId::try_from(MAIN_ROOM)?;
+
+    {
+        let bot = bot.lock().unwrap();
+        bot.send("@phil:kulak.us", "@chase:kulak.us", 500, Some("allowance"))?;
+        bot.send("@phil:kulak.us", "@chase:kulak.us", 500, Some("allowance"))?;
+    }
+
+    client.room_send(&room_id, text_plain("Sent $5 allowance to Chase and Charlie."), None)
+        .await?;
 
     Ok(())
 }
@@ -101,6 +153,24 @@ impl Bot {
         })?;
 
         println!("initialized new database");
+
+        Ok(())
+    }
+
+    pub fn send(
+        self: &Bot,
+        from: &str,
+        to: &str,
+        amount: isize,
+        memo: Option<&str>
+    ) -> anyhow::Result<()> {
+        self.insert(&Transaction {
+            sender: Some(from.to_string()),
+            receiver: to.to_string(),
+            amount,
+            date: chrono::Utc::now().to_rfc3339().to_string(),
+            memo: memo.map(|s| s.to_string())
+        })?;
 
         Ok(())
     }
@@ -186,7 +256,7 @@ impl Bot {
     ) -> anyhow::Result<()> {
         let sender = matrix::normalize_sender(sender, command)?;
         let balance = Money::from_minor(self.get_balance(&sender)?, iso::USD);
-        room.send(matrix::text_plain(&format!("{}", balance)), None).await?;
+        room.send(text_plain(&format!("{}", balance)), None).await?;
         Ok(())
     }
 
@@ -211,34 +281,34 @@ impl Bot {
         } else if let Ok(amount) = Money::from_str(args[1], iso::USD) {
             (matrix::create_user_id(args[0])?, amount)
         } else {
-            room.send(matrix::text_plain("Please use a valid amount."), None).await?;
+            room.send(text_plain("Please use a valid amount."), None).await?;
             return Ok(())
         };
 
         if amount.is_negative() && !matrix::is_admin(&sender) {
-            room.send(matrix::text_plain(
+            room.send(text_plain(
                 "You are not allowed to take money, only send it."), None).await?;
             return Ok(())
         }
 
         if amount.is_zero() {
-            room.send(matrix::text_plain("Wait... what's the point of that?"), None).await?;
+            room.send(text_plain("Wait... what's the point of that?"), None).await?;
             return Ok(())
         }
 
         if self.get_balance(&sender)? < 0 {
-            room.send(matrix::text_plain("You don't have enough money!"), None).await?;
+            room.send(text_plain("You don't have enough money!"), None).await?;
             return Ok(())
         }
 
         if !self.id_exists(&receiver)? && !matrix::is_admin(&sender) {
-            room.send(matrix::text_plain(
+            room.send(text_plain(
                 &format!("{} isn't a valid user.", receiver.localpart())), None).await?;
             return Ok(())
         }
 
         if sender == receiver {
-            room.send(matrix::text_plain(
+            room.send(text_plain(
                 "So... you want to send money to yourself, from yourself?"), None).await?;
             return Ok(())
         }
@@ -256,10 +326,10 @@ impl Bot {
         let pretty_id = matrix::pretty_user_id(&receiver);
 
         if memo.is_some() {
-            room.send(matrix::text_plain(
+            room.send(text_plain(
                 &format!("Sent {} to {} for {}.", amount, pretty_id, memo.unwrap())), None).await?;
         } else {
-            room.send(matrix::text_plain(
+            room.send(text_plain(
                 &format!("Sent {} to {}.", amount, pretty_id)), None).await?;
         };
 
