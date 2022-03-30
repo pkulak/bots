@@ -12,6 +12,7 @@ use matrix_sdk::ruma::events::SyncMessageEvent;
 use rusqlite::{Connection, params};
 use rust_decimal::prelude::ToPrimitive;
 use rusty_money::{iso, Money};
+use rusty_money::iso::Currency;
 use tokio::task;
 
 use matrix::text_plain;
@@ -133,6 +134,14 @@ impl Bot {
         self.conn.execute("CREATE INDEX transaction_senders ON transactions (sender)", [])?;
         self.conn.execute("CREATE INDEX transaction_receivers ON transactions (receiver)", [])?;
 
+        self.conn.execute("
+            CREATE TABLE users (
+                user_id TEXT PRIMARY KEY,
+                min_balance INTEGER NOT NULL
+            )",
+            []
+        )?;
+
         let now = chrono::Utc::now().to_rfc3339();
 
         // the two seed transactions
@@ -187,32 +196,53 @@ impl Bot {
         Ok(())
     }
 
-    fn get_balance(self: &Bot, user_id: &UserId) -> anyhow::Result<i64> {
+    fn get_balance(self: &Bot, user_id: &UserId) -> anyhow::Result<Money<Currency>> {
         let mut stmt = self.conn
             .prepare("
                 SELECT COALESCE(SUM(amount), 0)
                 FROM transactions
                 WHERE sender = ?1
-            ")
-            .unwrap();
+            ")?;
 
         let sent: i64 = stmt
-            .query_row(params![user_id.as_str()], |row| row.get(0))
-            .unwrap();
+            .query_row(params![user_id.as_str()], |row| row.get(0))?;
 
         let mut stmt = self.conn
             .prepare("
                 SELECT COALESCE(SUM(amount), 0)
                 FROM transactions
                 WHERE receiver = ?1
-            ")
-            .unwrap();
+            ")?;
 
         let received: i64 = stmt
-            .query_row(params![user_id.as_str()], |row| row.get(0))
-            .unwrap();
+            .query_row(params![user_id.as_str()], |row| row.get(0))?;
 
-        Ok(received - sent)
+        Ok(Money::from_minor(received - sent, iso::USD))
+    }
+
+    fn get_min_balance(self: &Bot, user_id: &UserId) -> rusqlite::Result<Money<Currency>> {
+        let mut stmt = self.conn
+            .prepare("
+                SELECT COALESCE(SUM(min_balance), 0)
+                FROM users
+                WHERE user_id = ?1
+            ")?;
+
+        let min:i64 = stmt.query_row(params![user_id.as_str()], |row| row.get(0))?;
+        Ok(Money::from_minor(min, iso::USD))
+    }
+
+    fn set_min_balance(self: &Bot, user_id: &UserId, min_balance: i64) -> anyhow::Result<()> {
+        self.conn.execute("
+            INSERT INTO users
+                (user_id, min_balance)
+            VALUES
+                (?1, ?2)
+            ON CONFLICT(user_id) DO UPDATE SET min_balance=?2",
+            params![user_id.as_str(), min_balance]
+        )?;
+
+        Ok(())
     }
 
     fn id_exists(self: &Bot, user_id: &UserId) -> anyhow::Result<bool> {
@@ -242,6 +272,10 @@ impl Bot {
                 self.on_balance_message(room, sender, command).await?;
             } else if let Some(command) = matrix::get_command("send", &message).await {
                 self.on_send_message(room, sender, command).await?;
+            } else if let Some(command) = matrix::get_command("set min", &message).await {
+                self.on_set_min_balance_message(room, sender, command).await?;
+            } else if let Some(command) = matrix::get_command("get min", &message).await {
+                self.on_get_min_balance_message(room, command).await?;
             }
         }
 
@@ -255,7 +289,7 @@ impl Bot {
         command: &str
     ) -> anyhow::Result<()> {
         let sender = matrix::normalize_sender(sender, command)?;
-        let balance = Money::from_minor(self.get_balance(&sender)?, iso::USD);
+        let balance = self.get_balance(&sender)?;
         room.send(text_plain(&format!("{}", balance)), None).await?;
         Ok(())
     }
@@ -296,7 +330,7 @@ impl Bot {
             return Ok(())
         }
 
-        if self.get_balance(&sender)? < 0 {
+        if (self.get_balance(&sender)? - amount.clone()) < self.get_min_balance(&sender)? {
             room.send(text_plain("You don't have enough money!"), None).await?;
             return Ok(())
         }
@@ -332,6 +366,63 @@ impl Bot {
             room.send(text_plain(
                 &format!("Sent {} to {}.", amount, pretty_id)), None).await?;
         };
+
+        Ok(())
+    }
+
+    async fn on_set_min_balance_message(
+        self: &Bot,
+        room: Joined,
+        sender: UserId,
+        command: &str
+    ) -> anyhow::Result<()> {
+        if !matrix::is_admin(&sender) {
+            room.send(text_plain("You are not allowed to set minimum balances."), None).await?;
+            return Ok(())
+        }
+
+        let args: Vec<&str> = command.split(" ").collect();
+
+        if args.len() != 2 {
+            room.send(text_plain("Usage: set min [user] [amount]."), None).await?;
+            return Ok(())
+        }
+
+        let user_id = matrix::create_user_id(args[0])?;
+
+        let amount = match Money::from_str(args[1], iso::USD) {
+            Ok(amount) => amount,
+            Err(_) => {
+                room.send(text_plain(&format!("Invalid amount: {}", args[1])), None).await?;
+                return Ok(())
+            }
+        };
+
+        self.set_min_balance(&user_id, amount.amount().to_i64().unwrap() * 100)?;
+
+        room.send(text_plain(&format!(
+            "Set minimum balance for {} to {}", matrix::pretty_user_id(&user_id), amount)), None)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn on_get_min_balance_message(
+        self: &Bot,
+        room: Joined,
+        command: &str
+    ) -> anyhow::Result<()> {
+        let args: Vec<&str> = command.split(" ").collect();
+
+        if args.len() != 1 {
+            room.send(text_plain("Usage: get min [user]."), None).await?;
+            return Ok(())
+        }
+
+        let user_id = matrix::create_user_id(args[0])?;
+        let min = self.get_min_balance(&user_id)?;
+
+        room.send(text_plain(&format!("{}", min)), None).await?;
 
         Ok(())
     }
