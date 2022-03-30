@@ -19,11 +19,11 @@ pub async fn main() -> anyhow::Result<()> {
 
 async fn on_room_message(event: SyncMessageEvent<MessageEventContent>, room: Room, client: Client) {
     if let Some((_, _, message)) = matrix::get_text_message(event, room, client).await {
-        if let Some(command) = matrix::get_command("bc", &message).await {
+        if let Some(command) = matrix::get_command("bc", &message) {
             webhook::broadcast(command).await.unwrap()
         }
 
-        if let Some(command) = matrix::get_command("n", &message).await {
+        if let Some(command) = matrix::get_command("n", &message) {
             webhook::notify(command).await.unwrap()
         }
     }

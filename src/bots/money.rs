@@ -268,13 +268,13 @@ impl Bot {
         client: Client
     ) -> anyhow::Result<()> {
         if let Some((room, sender, message)) = matrix::get_text_message(event, room, client).await {
-            if let Some(command) = matrix::get_command("balance", &message).await {
+            if let Some(command) = matrix::get_command("balance", &message) {
                 self.on_balance_message(room, sender, command).await?;
-            } else if let Some(command) = matrix::get_command("send", &message).await {
+            } else if let Some(command) = matrix::get_command("send", &message) {
                 self.on_send_message(room, sender, command).await?;
-            } else if let Some(command) = matrix::get_command("set min", &message).await {
+            } else if let Some(command) = matrix::get_command("set min", &message) {
                 self.on_set_min_balance_message(room, sender, command).await?;
-            } else if let Some(command) = matrix::get_command("get min", &message).await {
+            } else if let Some(command) = matrix::get_command("get min", &message) {
                 self.on_get_min_balance_message(room, command).await?;
             }
         }

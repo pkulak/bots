@@ -43,7 +43,7 @@ pub async fn get_text_message(
     }
 }
 
-pub async fn get_command<'a>(prefix: &str, message: &'a str) -> Option<&'a str> {
+pub fn get_command<'a>(prefix: &str, message: &'a str) -> Option<&'a str> {
     let lower_message = message.to_lowercase();
     let lower_prefix = prefix.to_lowercase();
 
