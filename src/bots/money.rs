@@ -352,7 +352,7 @@ impl Bot {
         self.insert(&Transaction {
             sender: Some(sender.to_string()),
             receiver: receiver.to_string(),
-            amount: (amount.amount().to_i64().unwrap() * 100).to_isize().unwrap(),
+            amount: matrix::money_to_isize(&amount),
             date: chrono::Utc::now().to_rfc3339(),
             memo: memo.clone()
         })?;
@@ -398,7 +398,7 @@ impl Bot {
             }
         };
 
-        self.set_min_balance(&user_id, amount.amount().to_i64().unwrap() * 100)?;
+        self.set_min_balance(&user_id, matrix::money_to_i64(&amount))?;
 
         room.send(text_plain(&format!(
             "Set minimum balance for {} to {}", matrix::pretty_user_id(&user_id), amount)), None)

@@ -1,17 +1,21 @@
 use std::env;
+
 use matrix_sdk::{Client, SyncSettings};
 use matrix_sdk::ClientConfig;
 use matrix_sdk::room::Joined;
 use matrix_sdk::room::Room;
+use matrix_sdk::ruma::{ServerName, UserId};
+use matrix_sdk::ruma::events::AnyMessageEventContent;
 use matrix_sdk::ruma::events::room::member::MemberEventContent;
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
 use matrix_sdk::ruma::events::StrippedStateEvent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
-use matrix_sdk::ruma::events::AnyMessageEventContent;
-use matrix_sdk::ruma::{ServerName, UserId};
 use reqwest::Url;
+use rust_decimal::prelude::*;
+use rusty_money::iso::Currency;
+use rusty_money::Money;
 use tokio::time;
 use tokio::time::Duration;
 
@@ -164,4 +168,12 @@ pub fn pretty_user_id(user_id: &UserId) -> String {
 pub fn is_admin(user_id: &UserId) -> bool {
     user_id.as_ref().eq_ignore_ascii_case("@phil:kulak.us") ||
         user_id.as_ref().eq_ignore_ascii_case("@gwen:kulak.us")
+}
+
+pub fn money_to_isize(money: &Money<Currency>) -> isize {
+    (money.clone() * 100isize).amount().to_isize().unwrap()
+}
+
+pub fn money_to_i64(money: &Money<Currency>) -> i64 {
+    (money.clone() * 100isize).amount().to_i64().unwrap()
 }
