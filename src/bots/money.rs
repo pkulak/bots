@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow;
-use chrono::{Datelike, Duration, Local, TimeZone};
+use chrono::{Timelike, Datelike, Duration, Local, TimeZone};
 use chrono_tz::US::Pacific;
 use futures::executor;
 use matrix_sdk::{Client, SyncSettings};
@@ -61,8 +61,13 @@ pub async fn main() -> anyhow::Result<()> {
 async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Result<()> {
     let now = Pacific.timestamp_millis(chrono::Utc::now().timestamp_millis());
 
-    let next_friday = now + Duration::days(
-        5 - now.weekday().number_from_monday().to_i64().unwrap());
+    let morning = now
+        .with_hour(9).unwrap()
+        .with_minute(0).unwrap()
+        .with_second(0).unwrap();
+
+    let next_friday = morning + Duration::days(
+        5 - morning.weekday().number_from_monday().to_i64().unwrap());
 
     let next_friday = if next_friday < now {
         next_friday + Duration::days(7)
@@ -70,8 +75,8 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
         next_friday
     };
 
-    let duration = next_friday.signed_duration_since(Local::now());
-    println!("allowance due in {:?} days", duration.num_days());
+    let duration = next_friday.signed_duration_since(now);
+    println!("allowance due in {:?} minutes", duration.num_minutes());
 
     tokio::time::sleep(duration.to_std().unwrap()).await;
 
