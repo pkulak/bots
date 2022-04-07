@@ -1,7 +1,8 @@
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow;
-use chrono::{Timelike, Datelike, Duration, Local, TimeZone};
+use chrono::{Datelike, DateTime, Duration, Timelike, TimeZone, Utc};
 use chrono_tz::US::Pacific;
 use futures::executor;
 use matrix_sdk::{Client, SyncSettings};
@@ -13,11 +14,13 @@ use rusqlite::{Connection, params};
 use rust_decimal::prelude::ToPrimitive;
 use rusty_money::{iso, Money};
 use rusty_money::iso::Currency;
+use string_builder::Builder;
 use tokio::task;
 
 use matrix::text_plain;
 
 use crate::matrix;
+use crate::matrix::text_html;
 
 const MAIN_ROOM: &str = "!hMPITSQBLFEleSJmVm:kulak.us";
 
@@ -94,11 +97,21 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
     Ok(())
 }
 
+#[derive(Clone)]
 struct Transaction {
     sender: Option<String>,
     receiver: String,
-    amount: isize,
+    amount: i64,
     date: String,
+    memo: Option<String>
+}
+
+#[derive(Clone)]
+struct BalanceTransaction<'a> {
+    balance: Money<'a, Currency>,
+    user: Option<UserId>,
+    amount: Money<'a, Currency>,
+    date: DateTime<chrono_tz::Tz>,
     memo: Option<String>
 }
 
@@ -162,7 +175,7 @@ impl Bot {
             sender: None,
             receiver: "@phil:kulak.us".to_string(),
             amount: 100_000,
-            date: now.to_string(),
+            date: now,
             memo: Some("seed value".to_string())
         })?;
 
@@ -175,14 +188,14 @@ impl Bot {
         self: &Bot,
         from: &str,
         to: &str,
-        amount: isize,
+        amount: i64,
         memo: Option<&str>
     ) -> anyhow::Result<()> {
         self.insert(&Transaction {
             sender: Some(from.to_string()),
             receiver: to.to_string(),
             amount,
-            date: chrono::Utc::now().to_rfc3339().to_string(),
+            date: chrono::Utc::now().to_rfc3339(),
             memo: memo.map(|s| s.to_string())
         })?;
 
@@ -237,6 +250,28 @@ impl Bot {
         Ok(Money::from_minor(min, iso::USD))
     }
 
+    fn get_ledger(self: &Bot, user_id: &UserId) -> anyhow::Result<Vec<Transaction>> {
+        let mut stmt = self.conn
+            .prepare("
+                SELECT *
+                FROM transactions
+                WHERE receiver = ?1 OR sender = ?1
+                ORDER BY date DESC LIMIT 5
+            ")?;
+
+        let res = stmt.query_map(params![user_id.as_str()], |row| {
+            Ok(Transaction {
+                sender: row.get("sender")?,
+                receiver: row.get("receiver")?,
+                amount: row.get("amount")?,
+                date: row.get("date")?,
+                memo: row.get("memo")?
+            })
+        })?;
+
+        Ok(res.into_iter().map(|row| row.unwrap()).collect())
+    }
+
     fn set_min_balance(self: &Bot, user_id: &UserId, min_balance: i64) -> anyhow::Result<()> {
         self.conn.execute("
             INSERT INTO users
@@ -281,6 +316,8 @@ impl Bot {
                 self.on_set_min_balance_message(room, sender, command).await?;
             } else if let Some(command) = matrix::get_command("get min", &message) {
                 self.on_get_min_balance_message(room, command).await?;
+            } else if let Some(command) = matrix::get_command("ledger", &message) {
+                self.on_ledger_message(room, sender, command).await?;
             }
         }
 
@@ -305,9 +342,9 @@ impl Bot {
         sender: UserId,
         command: &str
     ) -> anyhow::Result<()> {
-        let args: Vec<&str> = command.split(" ")
+        let args: Vec<&str> = command.split(' ')
             .filter(|w| !w.eq_ignore_ascii_case("to"))
-            .filter(|w| w.trim().len() > 0)
+            .filter(|w| !w.trim().is_empty())
             .collect();
 
         if args.len() < 2 {
@@ -357,7 +394,7 @@ impl Bot {
         self.insert(&Transaction {
             sender: Some(sender.to_string()),
             receiver: receiver.to_string(),
-            amount: matrix::money_to_isize(&amount),
+            amount: matrix::money_to_i64(&amount),
             date: chrono::Utc::now().to_rfc3339(),
             memo: memo.clone()
         })?;
@@ -386,7 +423,7 @@ impl Bot {
             return Ok(())
         }
 
-        let args: Vec<&str> = command.split(" ").collect();
+        let args: Vec<&str> = command.split(' ').collect();
 
         if args.len() != 2 {
             room.send(text_plain("Usage: set min [user] [amount]."), None).await?;
@@ -417,7 +454,7 @@ impl Bot {
         room: Joined,
         command: &str
     ) -> anyhow::Result<()> {
-        let args: Vec<&str> = command.split(" ").collect();
+        let args: Vec<&str> = command.split(' ').collect();
 
         if args.len() != 1 {
             room.send(text_plain("Usage: get min [user]."), None).await?;
@@ -428,6 +465,111 @@ impl Bot {
         let min = self.get_min_balance(&user_id)?;
 
         room.send(text_plain(&format!("{}", min)), None).await?;
+
+        Ok(())
+    }
+
+    async fn on_ledger_message(
+        self: &Bot,
+        room: Joined,
+        sender: UserId,
+        command: &str
+    ) -> anyhow::Result<()> {
+        let user_id = {
+            let user_id = command.split(' ').next().unwrap();
+
+            if user_id.to_lowercase() == "plain" {
+                sender
+            } else {
+                matrix::normalize_sender(sender, user_id)?
+            }
+        };
+
+        let running_balance = &mut self.get_balance(&user_id)?;
+
+        // grab our ledger and convert to balance entries
+        let ledger: Vec<BalanceTransaction> = self.get_ledger(&user_id)?.into_iter().map(|tr| {
+            let (user, amount) = if tr.receiver == user_id.as_str() {
+                // I'm the receiver
+                (tr.sender, tr.amount)
+            } else {
+                // If I'm the sender, it's a loss; swap the sign
+                (Some(tr.receiver), -tr.amount)
+            };
+
+            let transaction = BalanceTransaction {
+                balance: running_balance.clone(),
+                user: user.map(|l| matrix::create_user_id(&l).unwrap()),
+                amount: Money::from_minor(amount, iso::USD),
+                date: Pacific.timestamp_millis(
+                    DateTime::<Utc>::from_str(&tr.date).unwrap().timestamp_millis()),
+                memo: tr.memo
+            };
+
+            *running_balance = Money::from_decimal(
+                running_balance.amount() - transaction.amount.amount(),
+                iso::USD);
+
+            transaction
+        }).collect();
+
+        // build up our HTML
+        let mut html_builder = Builder::default();
+
+        html_builder.append("<table>");
+        html_builder.append(
+            "<tr><th>Balance</th><th>Amount</th><th>To/From</th><th>For</th><th>Date</th></tr>");
+
+        for tr in ledger.clone() {
+            html_builder.append(format!(
+                "<tr><td>{}<td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                tr.balance,
+                tr.amount,
+                tr.user.map(|u| matrix::pretty_user_id(&u)).unwrap_or_default(),
+                tr.memo.unwrap_or_default(),
+                tr.date.format("%b %d")
+            ));
+        }
+
+        let pacific_time = Pacific.ymd(1990, 5, 6).and_hms(12, 30, 45);
+        pacific_time.with_timezone(&Pacific);
+
+        html_builder.append("</table>");
+
+        // and our text
+        let mut txt_builder = Builder::default();
+
+        for tr in ledger {
+            let memo = if let Some(memo) = tr.memo {
+                format!(" for {}", memo)
+            } else {
+                "".to_string()
+            };
+
+            if tr.amount.is_negative() {
+                txt_builder.append(format!("On {} you sent {} {}{}.",
+                    tr.date.format("%b %d"),
+                    tr.user.map(|u| matrix::pretty_user_id(&u)).unwrap(),
+                    tr.amount * -1,
+                    memo
+                ));
+            } else {
+                txt_builder.append(format!("On {} {} sent you {}{}.",
+                    tr.date.format("%b %d"),
+                    tr.user.map(|u| matrix::pretty_user_id(&u)).unwrap(),
+                    tr.amount,
+                    memo
+                ));
+            }
+            txt_builder.append("\n");
+        };
+
+        if command.to_lowercase().contains("plain") {
+            room.send(text_plain(&txt_builder.string().unwrap()), None).await?;
+        } else {
+            room.send(text_html(
+                &txt_builder.string().unwrap(), &html_builder.string().unwrap()), None).await?;
+        }
 
         Ok(())
     }

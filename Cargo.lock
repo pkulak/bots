@@ -156,6 +156,7 @@ dependencies = [
  "rusty-money",
  "serde",
  "serde_json",
+ "string-builder",
  "tokio",
 ]
 
@@ -2312,6 +2313,12 @@ checksum = "5c01a0c15da1b0b0e1494112e7af814a678fec9bd157881b49beac661e9b6f32"
 dependencies = [
  "der",
 ]
+
+[[package]]
+name = "string-builder"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bd10a070fb1f2796a288abec42695db4682a82b6f12ffacd60fb8d5ad3a4a12"
 
 [[package]]
 name = "subtle"

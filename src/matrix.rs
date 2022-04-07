@@ -56,11 +56,11 @@ pub fn get_command<'a>(prefix: &str, message: &'a str) -> Option<&'a str> {
     }
 
     if lower_message.starts_with(&format!("{} ", lower_prefix)) {
-        return Some(&message[prefix.len() + 1..].trim())
+        return Some(message[prefix.len() + 1..].trim())
     }
 
     if lower_message.starts_with(&format!("{}. ", lower_prefix)) {
-        return Some(&message[prefix.len() + 2..].trim())
+        return Some(message[prefix.len() + 2..].trim())
     }
 
     Option::None
@@ -130,8 +130,12 @@ pub fn text_plain(message: &str) -> impl Into<AnyMessageEventContent> {
     AnyMessageEventContent::RoomMessage(MessageEventContent::text_plain(message))
 }
 
+pub fn text_html(plain: &str, html: &str) -> impl Into<AnyMessageEventContent> {
+    AnyMessageEventContent::RoomMessage(MessageEventContent::text_html(plain, html))
+}
+
 pub fn normalize_sender(sender: UserId, command: &str) -> anyhow::Result<UserId> {
-    let sender = if command.len() > 0 {
+    let sender = if !command.is_empty() {
         create_user_id(command)?
     } else {
         sender
@@ -156,6 +160,12 @@ pub fn create_user_id(id: &str) -> anyhow::Result<UserId> {
 }
 
 pub fn pretty_user_id(user_id: &UserId) -> String {
+    match user_id.as_str() {
+        "@phil:kulak.us" => return "Dad".to_string(),
+        "@gwen:kulak.us" => return "Mom".to_string(),
+        _ => ()
+    }
+
     let localpart = &mut user_id.localpart().to_string();
 
     if let Some(s) = localpart.get_mut(0..1) {
@@ -168,10 +178,6 @@ pub fn pretty_user_id(user_id: &UserId) -> String {
 pub fn is_admin(user_id: &UserId) -> bool {
     user_id.as_ref().eq_ignore_ascii_case("@phil:kulak.us") ||
         user_id.as_ref().eq_ignore_ascii_case("@gwen:kulak.us")
-}
-
-pub fn money_to_isize(money: &Money<Currency>) -> isize {
-    (money.clone() * 100isize).amount().to_isize().unwrap()
 }
 
 pub fn money_to_i64(money: &Money<Currency>) -> i64 {
