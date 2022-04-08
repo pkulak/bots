@@ -88,7 +88,7 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
     {
         let bot = bot.lock().unwrap();
         bot.send("@phil:kulak.us", "@chase:kulak.us", 500, Some("allowance"))?;
-        bot.send("@phil:kulak.us", "@chase:kulak.us", 500, Some("allowance"))?;
+        bot.send("@phil:kulak.us", "@charlie:kulak.us", 500, Some("allowance"))?;
     }
 
     client.room_send(&room_id, text_plain("Sent $5 allowance to Chase and Charlie."), None)
