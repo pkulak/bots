@@ -94,6 +94,9 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
     client.room_send(&room_id, text_plain("Sent $5 allowance to Chase and Charlie."), None)
         .await?;
 
+    // sleep for a tad just to make sure we cycle over
+    tokio::time::sleep(Duration::minutes(1).to_std().unwrap()).await;
+
     Ok(())
 }
 
