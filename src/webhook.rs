@@ -29,6 +29,16 @@ async fn webook(id: &str, message: &str) -> Result<()> {
     Ok(())
 }
 
+pub async fn play_video(url: &str) -> Result<()> {
+    let id = env::var("PLAY_VIDEO")
+        .expect("PLAY_VIDEO environmental variable not set");
+
+    println!("playing video at {}", url);
+
+    webook(&id, url).await?;
+    Ok(())
+}
+
 pub async fn broadcast(message: &str) -> Result<()> {
     let id = env::var("BROADCAST")
         .expect("BROADCAST environmental variable not set");

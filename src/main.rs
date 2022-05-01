@@ -10,6 +10,7 @@ async fn main() -> anyhow::Result<()> {
         match bot.as_str() {
             "home" => bots::home::main().await?,
             "money" => bots::money::main().await?,
+            "owen" => bots::owen::main().await?,
             _ => {
                 println!("unknown bot: {}", bot);
                 return Ok(());
