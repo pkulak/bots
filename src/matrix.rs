@@ -47,6 +47,16 @@ pub async fn get_text_message(
     }
 }
 
+pub fn find_command<'a>(prefixes: Vec<&str>, message: &'a str) -> Option<&'a str> {
+    for prefix in &prefixes {
+        if let Some(command) = get_command(prefix, message) {
+            return Option::Some(command)
+        }
+    }
+
+    Option::None
+}
+
 pub fn get_command<'a>(prefix: &str, message: &'a str) -> Option<&'a str> {
     let lower_message = message.to_lowercase();
     let lower_prefix = prefix.to_lowercase();
