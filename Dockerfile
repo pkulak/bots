@@ -8,5 +8,6 @@ COPY ./src src
 RUN cargo install --path .
 
 FROM debian:stable-slim
+RUN apt-get update && apt-get install ca-certificates -y
 COPY --from=builder /usr/local/cargo/bin/bots /usr/bin/bots
 
