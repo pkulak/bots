@@ -4,10 +4,11 @@ use matrix_sdk::{Client, SyncSettings};
 use matrix_sdk::ClientConfig;
 use matrix_sdk::room::Joined;
 use matrix_sdk::room::Room;
-use matrix_sdk::ruma::{ServerName, UserId};
+use matrix_sdk::ruma::{MxcUri, ServerName, UserId};
 use matrix_sdk::ruma::events::AnyMessageEventContent;
+use matrix_sdk::ruma::events::room::ImageInfo;
 use matrix_sdk::ruma::events::room::member::MemberEventContent;
-use matrix_sdk::ruma::events::room::message::MessageEventContent;
+use matrix_sdk::ruma::events::room::message::{ImageMessageEventContent, MessageEventContent};
 use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
 use matrix_sdk::ruma::events::StrippedStateEvent;
@@ -38,6 +39,35 @@ pub async fn get_text_message(
                 None
             } else {
                 Some((room, sender, body))
+            }
+        } else {
+            Option::None
+        }
+    } else {
+        Option::None
+    }
+}
+
+pub async fn get_image_message(
+    event: SyncMessageEvent<MessageEventContent>,
+    room: Room,
+    client: Client
+) -> Option<(Joined, UserId, MxcUri, Box<ImageInfo>)> {
+    if let Room::Joined(room) = room {
+        if let SyncMessageEvent {
+            content: MessageEventContent {
+                msgtype: MessageType::Image(
+                    ImageMessageEventContent { url: Some(uri), info: Some(info), .. }),
+                ..
+            },
+            sender,
+            ..
+        } = event
+        {
+            if sender.eq(&client.user_id().await.unwrap()) {
+                None
+            } else {
+                Some((room, sender, uri, info))
             }
         } else {
             Option::None

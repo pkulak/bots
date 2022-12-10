@@ -13,6 +13,7 @@ async fn main() -> anyhow::Result<()> {
             "money" => bots::money::main().await?,
             "owen" => bots::owen::main().await?,
             "ai" => bots::ai::main().await?,
+            "photo" => bots::photo::main().await?,
             _ => {
                 println!("unknown bot: {}", bot);
                 return Ok(());
