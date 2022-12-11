@@ -1,10 +1,11 @@
 use std::{env, fs};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Sub};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::time::{Duration, SystemTime};
+use anyhow::bail;
 
 use bytes::Bytes;
 use lettre::{Message, SmtpTransport, Transport};
@@ -250,29 +251,57 @@ impl Bot {
                 self.only = None;
                 joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
 
+            // help!
+            } else if let Some(_) = matrix::get_command("help", &message) {
+                let text = vec![
+                    "who: Show who photos are currently being sent to.",
+                    "only mark: Only send photos to Mark.",
+                    "only mark jane: Only send photos to Mark and Jane.",
+                    "not mark: Don't send photos to Mark.",
+                    "reset: Send photos to everyone."];
+
+                let html = vec![
+                    "<ul>",
+                    "<li><strong>who</strong>: Show who photos are currently being sent to.</li>",
+                    "<li><strong>only mark</strong>: Only send photos to Mark.</li>",
+                    "<li><strong>only mark jane</strong>: Only send photos to Mark and Jane.</li>",
+                    "<li><strong>not mark</strong>: Don't send photos to Mark.</li>",
+                    "<li><strong>reset</strong>: Send photos to everyone.</li>",
+                    "</ul>"];
+
+                joined.send(matrix::text_html(&text.join("\n"), &html.join("\n")), None).await?;
+
             // skip some recipients
             } else if let Some(command) = matrix::get_command("not", &message) {
-                let all = self.recipients();
-                let mut filtered = self.recipients();
-
-                for skip in command.split(" ") {
-                    let found = match all.get(&skip.to_lowercase()) {
-                        Some(_) => {
-                            filtered.remove(skip);
-                            true
-                        }
-                        None => {
-                            joined.send(matrix::text_plain(
-                                &format!("I don't know who {} is!", skip)), None).await?;
-                            false
-                        }
-                    };
-
-                    if !found {
+                let recipients = match self.command_as_recipients(command) {
+                    Ok(r) => r,
+                    Err(message) => {
+                        joined.send(matrix::text_plain(&message.to_string()), None).await?;
                         return Ok(())
                     }
-                }
+                };
 
+                let mut filtered = self.recipients();
+                for skip in recipients { filtered.remove(&skip); }
+                self.only = Some(filtered.clone());
+
+                joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
+
+                println!("only sending to {:?}", self.only);
+
+            // only send to some recipients
+            } else if let Some(command) = matrix::get_command("only", &message) {
+                let recipients = match self.command_as_recipients(command) {
+                    Ok(r) => r,
+                    Err(message) => {
+                        joined.send(matrix::text_plain(&message.to_string()), None).await?;
+                        return Ok(())
+                    }
+                };
+
+                let all = Bot::all_recipients();
+                let mut filtered: HashMap<String, String> = HashMap::new();
+                for to in &recipients { filtered.insert(to.clone(), all[to].clone()); }
                 self.only = Some(filtered.clone());
 
                 joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
@@ -327,14 +356,30 @@ impl Bot {
         Ok(())
     }
 
+    fn all_recipients() -> HashMap<String, String> {
+        let json = env::var("SMTP_TO").expect("SMTP_TO environmental variable not set");
+        serde_json::from_str(json.as_str()).unwrap()
+    }
+
     fn recipients(&self) -> HashMap<String, String> {
         match self.only.clone() {
             Some(recipients) => recipients,
-            None => {
-                let json = env::var("SMTP_TO").expect("SMTP_TO environmental variable not set");
-                serde_json::from_str(json.as_str()).unwrap()
-            }
+            None => Bot::all_recipients()
         }
+    }
+
+    fn command_as_recipients(&self, command: &str) -> anyhow::Result<HashSet<String>> {
+        let all = Bot::all_recipients();
+        let mut collected: HashSet<String> = HashSet::new();
+
+        for recip in command.split(" ") {
+            match all.get(&recip.to_lowercase()) {
+                Some(_) => collected.insert(recip.to_string()),
+                None => bail!("I don't know who {} is!", recip)
+            };
+        }
+
+        Ok(collected)
     }
 
     fn recipients_friendly(&self, present_tense: bool) -> String {
@@ -356,7 +401,7 @@ impl Bot {
         if present_tense {
             format!("Sent to {}.", who)
         } else {
-            format!("The next photo will be sent to {}.", who)
+            format!("Photos will be sent to {}.", who)
         }
     }
 }
