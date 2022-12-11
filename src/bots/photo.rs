@@ -1,4 +1,5 @@
 use std::{env, fs};
+use std::collections::HashMap;
 use std::ops::{Add, Sub};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -83,7 +84,8 @@ impl Token {
 struct Bot {
     http: reqwest::Client,
     oauth: BasicClient,
-    token: Option<Token>
+    token: Option<Token>,
+    only: Option<HashMap<String, String>>
 }
 
 impl Bot {
@@ -103,7 +105,7 @@ impl Bot {
             .set_redirect_uri(
                 RedirectUrl::new("https://accounts.vevo.com/callback".to_string()).unwrap());
 
-        Bot { oauth: client, http: reqwest::Client::new(), token: Bot::load_token() }
+        Bot { oauth: client, http: reqwest::Client::new(), token: Bot::load_token(), only: None }
     }
 
     fn save_token(&self) -> anyhow::Result<()> {
@@ -229,30 +231,112 @@ impl Bot {
         room: Room,
         client: Client
     ) -> anyhow::Result<()> {
+        // text messages
         if let Some((joined, _, message)) =
                 matrix::get_text_message(event.clone(), room.clone(), client.clone()).await {
 
+            // start the auth process
             if let Some(_) = matrix::get_command("auth", &message) {
                 let url = self.begin_auth();
                 joined.send(matrix::text_plain(url.as_str()), None).await?;
-            } else {
+
+            // see what's going on
+            } else if let Some(_) = matrix::get_command("who", &message) {
+                joined.send(matrix::text_plain(&self.recipients_friendly()), None).await?;
+
+            // reset the recipients
+            } else if let Some(_) = matrix::get_command("reset", &message) {
+                self.only = None;
+                joined.send(matrix::text_plain(&self.recipients_friendly()), None).await?;
+
+            // skip some recipients
+            } else if let Some(command) = matrix::get_command("not", &message) {
+                let all = self.recipients();
+                let mut filtered = self.recipients();
+
+                for skip in command.split(" ") {
+                    let found = match all.get(&skip.to_lowercase()) {
+                        Some(_) => {
+                            filtered.remove(skip);
+                            true
+                        }
+                        None => {
+                            joined.send(matrix::text_plain(
+                                &format!("I don't know who {} is!", skip)), None).await?;
+                            false
+                        }
+                    };
+
+                    if !found {
+                        return Ok(())
+                    }
+                }
+
+                self.only = Some(filtered.clone());
+
+                joined.send(matrix::text_plain(&self.recipients_friendly()), None).await?;
+
+                println!("only sending to {:?}", self.only);
+
+            // finish up the auth process
+            } else if self.token.is_none() {
                 self.complete_auth(&message).await?;
                 joined.send(matrix::text_plain("Login successful!"), None).await?;
             }
         }
 
+        // photos
         if let Some((_, _, uri, info)) =
                 matrix::get_image_message(event.clone(), room.clone(), client.clone()).await {
 
             let (photo, mime_type) = download_photo(uri, info).await?;
+            let emails = Vec::from_iter(self.recipients().into_values());
 
-            send_emails(&photo, &mime_type).await?;
+            send_emails(&photo, &mime_type, emails).await?;
+            self.only = None;
 
             self.check_auth().await?;
             self.upload_photo(&photo, &mime_type).await?;
         }
 
         Ok(())
+    }
+
+    fn recipients(&self) -> HashMap<String, String> {
+        match self.only.clone() {
+            Some(recipients) => recipients,
+            None => {
+                let json = env::var("SMTP_TO").expect("SMTP_TO environmental variable not set");
+                serde_json::from_str(json.as_str()).unwrap()
+            }
+        }
+    }
+
+    fn recipients_friendly(&self) -> String {
+        let rec: Vec<String> = self.recipients().keys()
+            .map(|k| name_case(k))
+            .collect();
+
+        let who = match rec.len() {
+            0 => "no one",
+            1 => String::from(rec.first().unwrap()),
+            2 => format!("{} and {}", rec[0], rec[1]),
+            _ => {
+                let head = &rec[0..rec.len() - 2].join(",");
+                let tail = format!("{} and {}", rec[rec.len() - 2], rec[rec.len() - 1]);
+                format!("{}, {}", head, tail)
+            }
+        };
+
+        format!("The next photo will be sent to {}.", who)
+    }
+}
+
+fn name_case(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
     }
 }
 
@@ -267,7 +351,7 @@ async fn download_photo(uri: MxcUri, info: Box<ImageInfo>) -> anyhow::Result<(By
     Ok((photo, String::from(info.mimetype.as_ref().unwrap())))
 }
 
-async fn send_emails(photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
+async fn send_emails(photo: &Bytes, mime_type: &str, to: Vec<String>) -> anyhow::Result<()> {
     let username = env::var("SMTP_USERNAME")
         .expect("SMTP_USERNAME environmental variable not set");
 
@@ -280,9 +364,6 @@ async fn send_emails(photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
     let from = env::var("SMTP_FROM")
         .expect("SMTP_FROM environmental variable not set");
 
-    let to = env::var("SMTP_TO")
-        .expect("SMTP_TO environmental variable not set");
-
     let creds = Credentials::new(username, password);
     let body = Body::new(photo.to_vec());
 
@@ -291,7 +372,7 @@ async fn send_emails(photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
         .credentials(creds)
         .build();
 
-    for address in to.split(",") {
+    for address in to {
         let email = Message::builder()
             .from(from.parse()?)
             .to(address.parse()?)
