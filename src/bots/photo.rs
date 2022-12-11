@@ -10,9 +10,9 @@ use bytes::Bytes;
 use lettre::{Message, SmtpTransport, Transport};
 use lettre::message::{Attachment, Body, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
+use libheif_rs::{ColorSpace, HeifContext, RgbChroma};
 use matrix_sdk::{Client, SyncSettings};
 use matrix_sdk::room::Room;
-use matrix_sdk::ruma::events::room::ImageInfo;
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
 use matrix_sdk::ruma::MxcUri;
@@ -20,6 +20,7 @@ use oauth2::{AccessToken, AuthorizationCode, AuthUrl, ClientId, ClientSecret, Cs
 use oauth2::basic::{BasicClient, BasicTokenResponse};
 use oauth2::reqwest::async_http_client;
 use oauth2::url::Url;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use tokio::task;
 
@@ -206,12 +207,12 @@ impl Bot {
                     {{
                         \"description\": \"Kulak Family Photo\",
                         \"simpleMediaItem\": {{
-                            \"fileName\": \"photo.jpg\",
+                            \"fileName\": \"{}\",
                             \"uploadToken\": \"{}\"
                         }}
                     }}
                 ]
-            }}", album_id, token);
+            }}", album_id, get_filename(mime_type), token);
 
         self.http.post("https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate")
             .header("Authorization", self.make_auth())
@@ -242,12 +243,12 @@ impl Bot {
 
             // see what's going on
             } else if let Some(_) = matrix::get_command("who", &message) {
-                joined.send(matrix::text_plain(&self.recipients_friendly()), None).await?;
+                joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
 
             // reset the recipients
             } else if let Some(_) = matrix::get_command("reset", &message) {
                 self.only = None;
-                joined.send(matrix::text_plain(&self.recipients_friendly()), None).await?;
+                joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
 
             // skip some recipients
             } else if let Some(command) = matrix::get_command("not", &message) {
@@ -274,7 +275,7 @@ impl Bot {
 
                 self.only = Some(filtered.clone());
 
-                joined.send(matrix::text_plain(&self.recipients_friendly()), None).await?;
+                joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
 
                 println!("only sending to {:?}", self.only);
 
@@ -286,18 +287,42 @@ impl Bot {
         }
 
         // photos
-        if let Some((_, _, uri, info)) =
+        if let Some((joined, _, uri, info)) =
                 matrix::get_image_message(event.clone(), room.clone(), client.clone()).await {
 
-            let (photo, mime_type) = download_photo(uri, info).await?;
-            let emails = Vec::from_iter(self.recipients().into_values());
-
-            send_emails(&photo, &mime_type, emails).await?;
-            self.only = None;
-
-            self.check_auth().await?;
-            self.upload_photo(&photo, &mime_type).await?;
+            let photo = download_photo(&uri).await?;
+            let mime_type = info.mimetype.unwrap();
+            self.send_photo(&photo, &mime_type).await?;
+            joined.send(matrix::text_plain(&self.recipients_friendly(true)), None).await?;
         }
+
+        // files
+        if let Some((joined, _, uri, info)) =
+                matrix::get_file_message(event.clone(), room.clone(), client.clone()).await {
+
+            match info.mimetype.as_deref() {
+                Some("image/heic") | Some("image/heif") => {
+                    let photo = convert_heic_to_jpeg(&download_photo(&uri).await?)?;
+                    self.send_photo(&photo, "image/jpeg").await?;
+                    joined.send(matrix::text_plain(&self.recipients_friendly(true)), None).await?;
+                },
+                _ => {
+                    joined.send(matrix::text_plain(
+                        "I don't know what to do with that file. :("), None).await?;
+                }
+            };
+        }
+
+        Ok(())
+    }
+
+    async fn send_photo(&mut self, photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
+        let emails = Vec::from_iter(self.recipients().into_values());
+
+        send_emails(photo, mime_type, emails).await?;
+
+        self.check_auth().await?;
+        self.upload_photo(photo, mime_type).await?;
 
         Ok(())
     }
@@ -312,13 +337,13 @@ impl Bot {
         }
     }
 
-    fn recipients_friendly(&self) -> String {
+    fn recipients_friendly(&self, present_tense: bool) -> String {
         let rec: Vec<String> = self.recipients().keys()
             .map(|k| name_case(k))
             .collect();
 
         let who = match rec.len() {
-            0 => "no one",
+            0 => "no one".to_string(),
             1 => String::from(rec.first().unwrap()),
             2 => format!("{} and {}", rec[0], rec[1]),
             _ => {
@@ -328,7 +353,11 @@ impl Bot {
             }
         };
 
-        format!("The next photo will be sent to {}.", who)
+        if present_tense {
+            format!("Sent to {}.", who)
+        } else {
+            format!("The next photo will be sent to {}.", who)
+        }
     }
 }
 
@@ -340,7 +369,16 @@ fn name_case(s: &str) -> String {
     }
 }
 
-async fn download_photo(uri: MxcUri, info: Box<ImageInfo>) -> anyhow::Result<(Bytes, String)> {
+fn get_filename(mime_type: &str) -> String {
+    let ext = mime_type.split("/").last().unwrap().to_lowercase();
+
+    match ext.as_str() {
+        "jpeg" => "photo.jpg".to_string(),
+        _ => format!("photo.{}", ext)
+    }
+}
+
+async fn download_photo(uri: &MxcUri) -> anyhow::Result<Bytes> {
     let id = uri.as_str().split("/").last().unwrap();
     let url = format!("https://kulak.us/_matrix/media/r0/download/kulak.us/{}", id);
 
@@ -348,7 +386,7 @@ async fn download_photo(uri: MxcUri, info: Box<ImageInfo>) -> anyhow::Result<(By
     let response = reqwest::Client::new().get(url).send().await?;
     let photo = response.bytes().await?;
 
-    Ok((photo, String::from(info.mimetype.as_ref().unwrap())))
+    Ok(photo)
 }
 
 async fn send_emails(photo: &Bytes, mime_type: &str, to: Vec<String>) -> anyhow::Result<()> {
@@ -379,7 +417,7 @@ async fn send_emails(photo: &Bytes, mime_type: &str, to: Vec<String>) -> anyhow:
             .subject("Photo")
             .multipart(
                 MultiPart::mixed()
-                    .singlepart(Attachment::new(String::from("photo@kulak.us")).body(
+                    .singlepart(Attachment::new(get_filename(mime_type)).body(
                         body.clone(),
                         mime_type.parse()?))
             )?;
@@ -391,4 +429,23 @@ async fn send_emails(photo: &Bytes, mime_type: &str, to: Vec<String>) -> anyhow:
     }
 
     Ok(())
+}
+
+fn convert_heic_to_jpeg(photo: &Bytes) -> anyhow::Result<Bytes> {
+    let ctx = HeifContext::read_from_bytes(photo)?;
+    let handle = ctx.primary_image_handle()?;
+    let image = handle.decode(ColorSpace::Rgb(RgbChroma::Rgb), false)?;
+    let planes = image.planes().interleaved.unwrap();
+
+    let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
+
+    comp.set_size(handle.width().to_usize().unwrap(), handle.height().to_usize().unwrap());
+    comp.set_mem_dest();
+    comp.start_compress();
+
+    comp.write_scanlines(planes.data);
+
+    comp.finish_compress();
+
+    Ok(Bytes::from(comp.data_to_vec().unwrap()))
 }
