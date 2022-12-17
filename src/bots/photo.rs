@@ -28,7 +28,7 @@ use tokio::task;
 use crate::matrix;
 
 pub async fn main() -> anyhow::Result<()> {
-    let (tx, rx): (SyncSender<MessageEvent>, Receiver<MessageEvent>) = mpsc::sync_channel(10);
+    let (tx, rx): (SyncSender<MessageEvent>, Receiver<MessageEvent>) = mpsc::sync_channel(1000);
     let client = matrix::create_client("photobot").await?;
     let mut bot = Bot::new();
 
@@ -50,7 +50,11 @@ pub async fn main() -> anyhow::Result<()> {
 
     loop {
         let message = rx.recv().unwrap();
-        bot.on_room_message(message.event, message.room, client.clone()).await?;
+
+        match bot.on_room_message(message.event, message.room, client.clone()).await {
+            Ok(_) => (),
+            Err(e) => println!("Could not run message loop: {}", e.to_string())
+        }
     }
 }
 
@@ -215,12 +219,16 @@ impl Bot {
                 ]
             }}", album_id, get_filename(mime_type), token);
 
-        self.http.post("https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate")
+        let resp = self.http.post("https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate")
             .header("Authorization", self.make_auth())
             .header("Content-Type", "application/json")
             .body(body)
             .send()
             .await?;
+
+        if !resp.status().is_success() {
+            bail!("unexpected response status from Google: {}", resp.status());
+        }
 
         println!("Uploaded photo to Google.");
 
@@ -373,8 +381,10 @@ impl Bot {
         let mut collected: HashSet<String> = HashSet::new();
 
         for recip in command.split(" ") {
-            match all.get(&recip.to_lowercase()) {
-                Some(_) => collected.insert(recip.to_string()),
+            let r = &recip.to_lowercase();
+
+            match all.get(&r) {
+                Some(_) => collected.insert(r.to_string()),
                 None => bail!("I don't know who {} is!", recip)
             };
         }
@@ -383,16 +393,18 @@ impl Bot {
     }
 
     fn recipients_friendly(&self, present_tense: bool) -> String {
-        let rec: Vec<String> = self.recipients().keys()
+        let mut rec: Vec<String> = self.recipients().keys()
             .map(|k| name_case(k))
             .collect();
+
+        rec.sort();
 
         let who = match rec.len() {
             0 => "no one".to_string(),
             1 => String::from(rec.first().unwrap()),
             2 => format!("{} and {}", rec[0], rec[1]),
             _ => {
-                let head = &rec[0..rec.len() - 2].join(",");
+                let head = &rec[0..rec.len() - 2].join(", ");
                 let tail = format!("{} and {}", rec[rec.len() - 2], rec[rec.len() - 1]);
                 format!("{}, {}", head, tail)
             }
