@@ -377,7 +377,7 @@ impl Bot {
     async fn send_photo(&mut self, photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
         let emails = Vec::from_iter(self.recipients().into_values());
 
-        send_emails(photo, mime_type, emails).await?;
+        send_emails(photo, mime_type, emails)?;
 
         match self.check_auth().await {
             Ok(_) => self.upload_photo(photo, mime_type).await?,
@@ -471,7 +471,7 @@ async fn download_photo(uri: &MxcUri) -> anyhow::Result<Bytes> {
     Ok(photo)
 }
 
-async fn send_emails(photo: &Bytes, mime_type: &str, to: Vec<String>) -> anyhow::Result<()> {
+fn send_emails(photo: &Bytes, mime_type: &str, to: Vec<String>) -> anyhow::Result<()> {
     let username = env::var("SMTP_USERNAME")
         .expect("SMTP_USERNAME environmental variable not set");
 
