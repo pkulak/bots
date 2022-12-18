@@ -13,12 +13,13 @@ use lettre::message::{Attachment, Body, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
 use libheif_rs::{ColorSpace, HeifContext, RgbChroma};
 use matrix_sdk::{Client, SyncSettings};
-use matrix_sdk::room::Room;
+use matrix_sdk::room::{Joined, Room};
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
 use matrix_sdk::ruma::MxcUri;
 use oauth2::{AccessToken, AuthorizationCode, AuthUrl, ClientId, ClientSecret, CsrfToken, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl};
 use oauth2::basic::{BasicClient, BasicTokenResponse};
+use oauth2::RequestTokenError::ServerResponse;
 use oauth2::reqwest::async_http_client;
 use oauth2::url::Url;
 use rust_decimal::prelude::ToPrimitive;
@@ -147,12 +148,20 @@ impl Bot {
                 let resp = self.oauth
                     .exchange_refresh_token(&token.refresh_token)
                     .add_extra_param("access_type", "offline")
-                    .request_async(async_http_client).await?;
+                    .request_async(async_http_client).await;
 
-                self.token = Some(Token::new(resp, Some(token)));
-                self.save_token()?;
+                match resp {
+                    Ok(r) => {
+                        self.token = Some(Token::new(r, Some(token)));
+                        self.save_token()?;
 
-                println!("refreshed token");
+                        println!("refreshed token");
+                    }
+                    Err(ServerResponse(err_resp)) => {
+                        bail!(err_resp.error_description().cloned().unwrap_or("".to_string()))
+                    }
+                    _ => println!("could not refresh auth")
+                }
             }
         }
 
@@ -248,6 +257,7 @@ impl Bot {
             // start the auth process
             if let Some(_) = matrix::get_command("auth", &message) {
                 let url = self.begin_auth();
+                self.token = None;
                 joined.send(matrix::text_plain(url.as_str()), None).await?;
 
             // see what's going on
@@ -329,8 +339,8 @@ impl Bot {
 
             let photo = download_photo(&uri).await?;
             let mime_type = info.mimetype.unwrap();
-            self.send_photo(&photo, &mime_type).await?;
-            joined.send(matrix::text_plain(&self.recipients_friendly(true)), None).await?;
+            let photo_res = self.send_photo(&photo, &mime_type).await;
+            self.confirm_sent_photo(joined, photo_res).await?;
         }
 
         // files
@@ -340,8 +350,8 @@ impl Bot {
             match info.mimetype.as_deref() {
                 Some("image/heic") | Some("image/heif") => {
                     let photo = convert_heic_to_jpeg(&download_photo(&uri).await?)?;
-                    self.send_photo(&photo, "image/jpeg").await?;
-                    joined.send(matrix::text_plain(&self.recipients_friendly(true)), None).await?;
+                    let photo_res = self.send_photo(&photo, "image/jpeg").await;
+                    self.confirm_sent_photo(joined, photo_res).await?;
                 },
                 _ => {
                     joined.send(matrix::text_plain(
@@ -353,13 +363,28 @@ impl Bot {
         Ok(())
     }
 
+    async fn confirm_sent_photo(&self, j: Joined, res: anyhow::Result<()>) -> anyhow::Result<()> {
+        match res {
+            Ok(_) =>
+                j.send(matrix::text_plain(&self.recipients_friendly(true)), None).await?,
+            Err(err) =>
+                j.send(matrix::text_plain(&err.to_string()), None).await?
+        };
+
+        Ok(())
+    }
+
     async fn send_photo(&mut self, photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
         let emails = Vec::from_iter(self.recipients().into_values());
 
         send_emails(photo, mime_type, emails).await?;
 
-        self.check_auth().await?;
-        self.upload_photo(photo, mime_type).await?;
+        match self.check_auth().await {
+            Ok(_) => self.upload_photo(photo, mime_type).await?,
+            Err(err) => bail!(
+                "The photo was sent, but there was an error uploading to Google Photos: {:?}. \
+                You may want to try authorizing again.", err)
+        }
 
         Ok(())
     }
