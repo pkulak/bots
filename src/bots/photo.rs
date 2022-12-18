@@ -381,7 +381,7 @@ impl Bot {
         let mut collected: HashSet<String> = HashSet::new();
 
         for recip in command.split(" ") {
-            let r = &recip.to_lowercase();
+            let r = recip.to_lowercase();
 
             match all.get(&r) {
                 Some(_) => collected.insert(r.to_string()),
