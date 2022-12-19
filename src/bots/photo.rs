@@ -273,16 +273,16 @@ impl Bot {
             } else if let Some(_) = matrix::get_command("help", &message) {
                 let text = vec![
                     "who: Show who photos are currently being sent to.",
-                    "only mark: Only send photos to Mark.",
-                    "only mark jane: Only send photos to Mark and Jane.",
+                    "to mark: Only send photos to Mark.",
+                    "to mark jane: Only send photos to Mark and Jane.",
                     "not mark: Don't send photos to Mark.",
                     "reset: Send photos to everyone."];
 
                 let html = vec![
                     "<ul>",
                     "<li><strong>who</strong>: Show who photos are currently being sent to.</li>",
-                    "<li><strong>only mark</strong>: Only send photos to Mark.</li>",
-                    "<li><strong>only mark jane</strong>: Only send photos to Mark and Jane.</li>",
+                    "<li><strong>to mark</strong>: Only send photos to Mark.</li>",
+                    "<li><strong>to mark jane</strong>: Only send photos to Mark and Jane.</li>",
                     "<li><strong>not mark</strong>: Don't send photos to Mark.</li>",
                     "<li><strong>reset</strong>: Send photos to everyone.</li>",
                     "</ul>"];
@@ -308,7 +308,7 @@ impl Bot {
                 println!("only sending to {:?}", self.only);
 
             // only send to some recipients
-            } else if let Some(command) = matrix::get_command("only", &message) {
+            } else if let Some(command) = matrix::find_command(vec!["to", "only"], &message) {
                 let recipients = match self.command_as_recipients(command) {
                     Ok(r) => r,
                     Err(message) => {
@@ -350,6 +350,7 @@ impl Bot {
             match info.mimetype.as_deref() {
                 Some("image/heic") | Some("image/heif") => {
                     let photo = convert_heic_to_jpeg(&download_photo(&uri).await?)?;
+                    println!("converted heic image to jpeg");
                     let photo_res = self.send_photo(&photo, "image/jpeg").await;
                     self.confirm_sent_photo(joined, photo_res).await?;
                 },
