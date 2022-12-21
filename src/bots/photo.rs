@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::time::{Duration, SystemTime};
-use anyhow::bail;
 
+use anyhow::bail;
 use bytes::Bytes;
 use lettre::{Message, SmtpTransport, Transport};
 use lettre::message::{Attachment, Body, MultiPart};
@@ -376,9 +376,7 @@ impl Bot {
     }
 
     async fn send_photo(&mut self, photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
-        let emails = Vec::from_iter(self.recipients().into_values());
-
-        send_emails(photo, mime_type, emails)?;
+        send_emails(photo, mime_type, self.recipients().values())?;
 
         match self.check_auth().await {
             Ok(_) => self.upload_photo(photo, mime_type).await?,
@@ -472,7 +470,13 @@ async fn download_photo(uri: &MxcUri) -> anyhow::Result<Bytes> {
     Ok(photo)
 }
 
-fn send_emails(photo: &Bytes, mime_type: &str, to: Vec<String>) -> anyhow::Result<()> {
+// TODO: this should be async
+fn send_emails<'a, I>(photo: &Bytes, mime_type: &str, to: I) -> anyhow::Result<()>
+where
+    I: Iterator<Item = &'a String>
+{
+    let to = Vec::from_iter(to);
+
     let username = env::var("SMTP_USERNAME")
         .expect("SMTP_USERNAME environmental variable not set");
 
@@ -493,22 +497,24 @@ fn send_emails(photo: &Bytes, mime_type: &str, to: Vec<String>) -> anyhow::Resul
         .credentials(creds)
         .build();
 
-    for address in to {
-        let email = Message::builder()
-            .from(from.parse()?)
-            .to(address.parse()?)
-            .subject("Photo")
-            .multipart(
-                MultiPart::mixed()
-                    .singlepart(Attachment::new(get_filename(mime_type)).body(
-                        body.clone(),
-                        mime_type.parse()?))
-            )?;
+    let mut builder = Message::builder()
+        .from(from.parse()?)
+        .subject("Photo");
 
-        match mailer.send(&email) {
-            Ok(_) => println!("Sent photo to {}", address),
-            Err(e) => panic!("Could not send email: {:?}", e)
-        }
+    for address in &to {
+        builder = builder.to(address.parse()?);
+    }
+
+    let email = builder.multipart(MultiPart::mixed()
+        .singlepart(Attachment::new(get_filename(mime_type)).body(
+            body.clone(),
+            mime_type.parse()?)))?;
+
+    match mailer.send(&email) {
+        Ok(_) => for address in &to {
+            println!("Sent photo to {}", address)
+        },
+        Err(e) => panic!("Could not send email: {:?}", e)
     }
 
     Ok(())
