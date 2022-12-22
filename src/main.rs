@@ -4,6 +4,7 @@ mod webhook;
 mod bots;
 mod matrix;
 mod ai;
+mod message_buffer;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

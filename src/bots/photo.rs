@@ -13,7 +13,7 @@ use lettre::message::{Attachment, Body, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
 use libheif_rs::{ColorSpace, HeifContext, RgbChroma};
 use matrix_sdk::{Client, SyncSettings};
-use matrix_sdk::room::{Joined, Room};
+use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
 use matrix_sdk::ruma::MxcUri;
@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use tokio::task;
 
 use crate::matrix;
+use crate::message_buffer::MessageBuffer;
 
 pub async fn main() -> anyhow::Result<()> {
     let (tx, rx): (SyncSender<MessageEvent>, Receiver<MessageEvent>) = mpsc::sync_channel(1000);
@@ -49,13 +50,32 @@ pub async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let mut buffer = MessageBuffer::new(&rx);
+
     loop {
-        let message = rx.recv().unwrap();
+        let message = buffer.poll();
+        let room = message.room.clone();
 
         match bot.on_room_message(message.event, message.room, client.clone()).await {
-            Ok(_) => (),
-            Err(e) => println!("Could not run message loop: {}", e.to_string())
-        }
+            Ok(sent) => {
+                if sent { buffer.inc() }
+
+                let total = buffer.get_final_count();
+
+                if total > 0 {
+                    if let Room::Joined(joined) = room {
+                        joined.send(matrix::text_plain(&bot.recipients_friendly(total)), None).await?;
+                    }
+                }
+            },
+            Err(err) => {
+                if let Room::Joined(joined) = room {
+                    joined.send(matrix::text_plain(&err.to_string()), None).await?;
+                } else {
+                    print!("could not run message loop: {}", err.to_string());
+                }
+            }
+        };
     }
 }
 
@@ -249,7 +269,7 @@ impl Bot {
         event: SyncMessageEvent<MessageEventContent>,
         room: Room,
         client: Client
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         // text messages
         if let Some((joined, _, message)) =
                 matrix::get_text_message(event.clone(), room.clone(), client.clone()).await {
@@ -262,12 +282,12 @@ impl Bot {
 
             // see what's going on
             } else if let Some(_) = matrix::get_command("who", &message) {
-                joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
+                joined.send(matrix::text_plain(&self.recipients_friendly(0)), None).await?;
 
             // reset the recipients
             } else if let Some(_) = matrix::get_command("reset", &message) {
                 self.only = None;
-                joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
+                joined.send(matrix::text_plain(&self.recipients_friendly(0)), None).await?;
 
             // help!
             } else if let Some(_) = matrix::get_command("help", &message) {
@@ -291,38 +311,24 @@ impl Bot {
 
             // skip some recipients
             } else if let Some(command) = matrix::get_command("not", &message) {
-                let recipients = match self.command_as_recipients(command) {
-                    Ok(r) => r,
-                    Err(message) => {
-                        joined.send(matrix::text_plain(&message.to_string()), None).await?;
-                        return Ok(())
-                    }
-                };
-
+                let recipients = self.command_as_recipients(command)?;
                 let mut filtered = self.recipients();
                 for skip in recipients { filtered.remove(&skip); }
                 self.only = Some(filtered.clone());
 
-                joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
+                joined.send(matrix::text_plain(&self.recipients_friendly(0)), None).await?;
 
                 println!("only sending to {:?}", self.only);
 
             // only send to some recipients
             } else if let Some(command) = matrix::find_command(vec!["to", "only"], &message) {
-                let recipients = match self.command_as_recipients(command) {
-                    Ok(r) => r,
-                    Err(message) => {
-                        joined.send(matrix::text_plain(&message.to_string()), None).await?;
-                        return Ok(())
-                    }
-                };
-
+                let recipients = self.command_as_recipients(command)?;
                 let all = Bot::all_recipients();
                 let mut filtered: HashMap<String, String> = HashMap::new();
                 for to in &recipients { filtered.insert(to.clone(), all[to].clone()); }
                 self.only = Some(filtered.clone());
 
-                joined.send(matrix::text_plain(&self.recipients_friendly(false)), None).await?;
+                joined.send(matrix::text_plain(&self.recipients_friendly(0)), None).await?;
 
                 println!("only sending to {:?}", self.only);
 
@@ -334,13 +340,13 @@ impl Bot {
         }
 
         // photos
-        if let Some((joined, _, uri, info)) =
+        if let Some((_, _, uri, info)) =
                 matrix::get_image_message(event.clone(), room.clone(), client.clone()).await {
 
             let photo = download_photo(&uri).await?;
             let mime_type = info.mimetype.unwrap();
-            let photo_res = self.send_photo(&photo, &mime_type).await;
-            self.confirm_sent_photo(joined, photo_res).await?;
+            self.send_photo(&photo, &mime_type).await?;
+            return Ok(true)
         }
 
         // files
@@ -351,8 +357,8 @@ impl Bot {
                 Some("image/heic") | Some("image/heif") => {
                     let photo = convert_heic_to_jpeg(&download_photo(&uri).await?)?;
                     println!("converted heic image to jpeg");
-                    let photo_res = self.send_photo(&photo, "image/jpeg").await;
-                    self.confirm_sent_photo(joined, photo_res).await?;
+                    self.send_photo(&photo, "image/jpeg").await?;
+                    return Ok(true)
                 },
                 _ => {
                     joined.send(matrix::text_plain(
@@ -361,18 +367,7 @@ impl Bot {
             };
         }
 
-        Ok(())
-    }
-
-    async fn confirm_sent_photo(&self, j: Joined, res: anyhow::Result<()>) -> anyhow::Result<()> {
-        match res {
-            Ok(_) =>
-                j.send(matrix::text_plain(&self.recipients_friendly(true)), None).await?,
-            Err(err) =>
-                j.send(matrix::text_plain(&err.to_string()), None).await?
-        };
-
-        Ok(())
+        Ok(false)
     }
 
     async fn send_photo(&mut self, photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
@@ -416,7 +411,7 @@ impl Bot {
         Ok(collected)
     }
 
-    fn recipients_friendly(&self, present_tense: bool) -> String {
+    fn recipients_friendly(&self, total: usize) -> String {
         let mut rec: Vec<String> = self.recipients().keys()
             .map(|k| name_case(k))
             .collect();
@@ -434,8 +429,9 @@ impl Bot {
             }
         };
 
-        if present_tense {
-            format!("Sent to {}.", who)
+        if total > 0 {
+            let label = if total == 1 { "photo" } else { "photos" };
+            format!("Sent {} {} to {}.", total, label, who)
         } else {
             format!("Photos will be sent to {}.", who)
         }
