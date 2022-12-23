@@ -11,22 +11,20 @@ use bytes::Bytes;
 use lettre::{Message, SmtpTransport, Transport};
 use lettre::message::{Attachment, Body, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
-use libheif_rs::{ColorSpace, HeifContext, RgbChroma};
 use matrix_sdk::{Client, SyncSettings};
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
-use matrix_sdk::ruma::MxcUri;
 use oauth2::{AccessToken, AuthorizationCode, AuthUrl, ClientId, ClientSecret, CsrfToken, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl};
 use oauth2::basic::{BasicClient, BasicTokenResponse};
 use oauth2::RequestTokenError::ServerResponse;
 use oauth2::reqwest::async_http_client;
 use oauth2::url::Url;
-use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use tokio::task;
 
 use crate::matrix;
+use crate::image;
 use crate::message_buffer::MessageBuffer;
 
 pub async fn main() -> anyhow::Result<()> {
@@ -343,9 +341,9 @@ impl Bot {
         if let Some((_, _, uri, info)) =
                 matrix::get_image_message(event.clone(), room.clone(), client.clone()).await {
 
-            let photo = download_photo(&uri).await?;
-            let mime_type = info.mimetype.unwrap();
-            self.send_photo(&photo, &mime_type).await?;
+            let photo = &matrix::download_photo(&uri).await?;
+            let jpeg = image::shrink_jpeg(photo)?;
+            self.send_photo(&jpeg, &photo, &info.mimetype.unwrap()).await?;
             return Ok(true)
         }
 
@@ -355,9 +353,9 @@ impl Bot {
 
             match info.mimetype.as_deref() {
                 Some("image/heic") | Some("image/heif") => {
-                    let photo = convert_heic_to_jpeg(&download_photo(&uri).await?)?;
-                    println!("converted heic image to jpeg");
-                    self.send_photo(&photo, "image/jpeg").await?;
+                    let photo = &matrix::download_photo(&uri).await?;
+                    let jpeg = image::convert_heic_to_jpeg(photo)?;
+                    self.send_photo(&jpeg, &photo, &info.mimetype.unwrap()).await?;
                     return Ok(true)
                 },
                 _ => {
@@ -370,8 +368,8 @@ impl Bot {
         Ok(false)
     }
 
-    async fn send_photo(&mut self, photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
-        send_emails(photo, mime_type, self.recipients().values())?;
+    async fn send_photo(&mut self, jpeg: &Bytes, photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
+        send_emails(jpeg, "image/jpeg", self.recipients().values())?;
 
         match self.check_auth().await {
             Ok(_) => self.upload_photo(photo, mime_type).await?,
@@ -455,17 +453,6 @@ fn get_filename(mime_type: &str) -> String {
     }
 }
 
-async fn download_photo(uri: &MxcUri) -> anyhow::Result<Bytes> {
-    let id = uri.as_str().split("/").last().unwrap();
-    let url = format!("https://kulak.us/_matrix/media/r0/download/kulak.us/{}", id);
-
-    // download the image to memory
-    let response = reqwest::Client::new().get(url).send().await?;
-    let photo = response.bytes().await?;
-
-    Ok(photo)
-}
-
 // TODO: this should be async
 fn send_emails<'a, I>(photo: &Bytes, mime_type: &str, to: I) -> anyhow::Result<()>
 where
@@ -514,23 +501,4 @@ where
     }
 
     Ok(())
-}
-
-fn convert_heic_to_jpeg(photo: &Bytes) -> anyhow::Result<Bytes> {
-    let ctx = HeifContext::read_from_bytes(photo)?;
-    let handle = ctx.primary_image_handle()?;
-    let image = handle.decode(ColorSpace::Rgb(RgbChroma::Rgb), false)?;
-    let planes = image.planes().interleaved.unwrap();
-
-    let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
-
-    comp.set_size(handle.width().to_usize().unwrap(), handle.height().to_usize().unwrap());
-    comp.set_mem_dest();
-    comp.start_compress();
-
-    comp.write_scanlines(planes.data);
-
-    comp.finish_compress();
-
-    Ok(Bytes::from(comp.data_to_vec().unwrap()))
 }

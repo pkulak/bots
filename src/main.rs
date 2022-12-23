@@ -1,3 +1,5 @@
+extern crate core;
+
 use std::env;
 
 mod webhook;
@@ -5,6 +7,7 @@ mod bots;
 mod matrix;
 mod ai;
 mod message_buffer;
+mod image;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

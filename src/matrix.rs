@@ -1,4 +1,5 @@
 use std::env;
+use bytes::Bytes;
 
 use matrix_sdk::{Client, SyncSettings};
 use matrix_sdk::ClientConfig;
@@ -251,4 +252,15 @@ pub fn is_admin(user_id: &UserId) -> bool {
 
 pub fn money_to_i64(money: &Money<Currency>) -> i64 {
     (money.clone() * 100isize).amount().to_i64().unwrap()
+}
+
+pub async fn download_photo(uri: &MxcUri) -> anyhow::Result<Bytes> {
+    let id = uri.as_str().split("/").last().unwrap();
+    let url = format!("https://kulak.us/_matrix/media/r0/download/kulak.us/{}", id);
+
+    // download the image to memory
+    let response = reqwest::Client::new().get(url).send().await?;
+    let photo = response.bytes().await?;
+
+    Ok(photo)
 }
