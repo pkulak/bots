@@ -21,7 +21,10 @@ pub fn convert_heic_to_jpeg(image: &Bytes) -> anyhow::Result<Bytes> {
 
 pub fn shrink_jpeg(image: &Bytes) -> anyhow::Result<Bytes> {
     let decoded = ImageReader::new(Cursor::new(image.to_vec())).with_guessed_format()?.decode()?;
-    shrink_to_jpeg(&Bytes::copy_from_slice(decoded.as_bytes()), decoded.width(), decoded.height())
+    let width = decoded.width();
+    let height = decoded.height();
+
+    shrink_to_jpeg(&Bytes::from(decoded.into_bytes()), width, height)
 }
 
 pub fn shrink_to_jpeg(img: &Bytes, width: u32, height: u32) -> anyhow::Result<Bytes> {
