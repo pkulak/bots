@@ -400,6 +400,11 @@ impl Bot {
         for recip in command.split(" ") {
             let r = recip.to_lowercase();
 
+            // allow sending to the Google album only
+            if r == "google" {
+                return Ok(HashSet::new())
+            }
+
             match all.get(&r) {
                 Some(_) => collected.insert(r.to_string()),
                 None => bail!("I don't know who {} is!", recip)
@@ -417,7 +422,7 @@ impl Bot {
         rec.sort();
 
         let who = match rec.len() {
-            0 => "no one".to_string(),
+            0 => "the Google album only".to_string(),
             1 => String::from(rec.first().unwrap()),
             2 => format!("{} and {}", rec[0], rec[1]),
             _ => {
