@@ -1,3 +1,4 @@
+use std::env;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
@@ -64,6 +65,16 @@ pub async fn main() -> anyhow::Result<()> {
 async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Result<()> {
     let now = Pacific.timestamp_millis(chrono::Utc::now().timestamp_millis());
 
+    let chase: i64 = env::var("CHASE")
+        .expect("CHASE environmental variable not set")
+        .parse()
+        .expect("not an integer");
+
+    let charlie: i64 = env::var("CHARLIE")
+        .expect("CHARLIE environmental variable not set")
+        .parse()
+        .expect("not an integer");
+
     let morning = now
         .with_hour(9).unwrap()
         .with_minute(0).unwrap()
@@ -87,11 +98,14 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
 
     {
         let bot = bot.lock().unwrap();
-        bot.send("@phil:kulak.us", "@chase:kulak.us", 500, Some("allowance"))?;
-        bot.send("@phil:kulak.us", "@charlie:kulak.us", 500, Some("allowance"))?;
+        bot.send("@phil:kulak.us", "@chase:kulak.us", chase, Some("allowance"))?;
+        bot.send("@phil:kulak.us", "@charlie:kulak.us", charlie, Some("allowance"))?;
     }
 
-    client.room_send(&room_id, text_plain("Sent $5 allowance to Chase and Charlie."), None)
+    client.room_send(&room_id, text_plain(
+        format!("Sent {} to Chase and {} to Charlie.",
+                Money::from_minor(chase, iso::USD),
+                Money::from_minor(charlie, iso::USD)).as_str()), None)
         .await?;
 
     // sleep for a tad just to make sure we cycle over

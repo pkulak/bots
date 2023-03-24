@@ -190,7 +190,7 @@ impl Bot {
         format!("Bearer {}", self.token.as_ref().unwrap().access_token.secret())
     }
 
-    fn begin_auth(&self) -> Url {
+    fn begin_auth(&mut self) -> Url {
         let (auth_url, _) = self.oauth
             .authorize_url(CsrfToken::new_random)
             .add_extra_param("access_type", "offline")
@@ -274,9 +274,14 @@ impl Bot {
 
             // start the auth process
             if let Some(_) = matrix::get_command("auth", &message) {
-                let url = self.begin_auth();
-                self.token = None;
-                joined.send(matrix::text_plain(url.as_str()), None).await?;
+                match self.check_auth().await {
+                    Ok(_) => joined.send(matrix::text_plain("Looks good!"), None).await?,
+                    Err(_) => {
+                        let url = self.begin_auth();
+                        self.token = None;
+                        joined.send(matrix::text_plain(url.as_str()), None).await?
+                    }
+                };
 
             // see what's going on
             } else if let Some(_) = matrix::get_command("who", &message) {
@@ -485,24 +490,22 @@ where
         .credentials(creds)
         .build();
 
-    let mut builder = Message::builder()
-        .from(from.parse()?)
-        .subject("Photo");
+    for address in to {
+        let email = Message::builder()
+            .from(from.parse()?)
+            .to(address.parse()?)
+            .subject("Photo")
+            .multipart(
+                MultiPart::mixed()
+                    .singlepart(Attachment::new(get_filename(mime_type)).body(
+                        body.clone(),
+                        mime_type.parse()?))
+            )?;
 
-    for address in &to {
-        builder = builder.to(address.parse()?);
-    }
-
-    let email = builder.multipart(MultiPart::mixed()
-        .singlepart(Attachment::new(get_filename(mime_type)).body(
-            body.clone(),
-            mime_type.parse()?)))?;
-
-    match mailer.send(&email) {
-        Ok(_) => for address in &to {
-            println!("Sent photo to {}", address)
-        },
-        Err(e) => panic!("Could not send email: {:?}", e)
+        match mailer.send(&email) {
+            Ok(_) => println!("Sent photo to {}", address),
+            Err(e) => panic!("Could not send email: {:?}", e)
+        }
     }
 
     Ok(())
