@@ -1,8 +1,9 @@
-use std::io::Cursor;
 use bytes::Bytes;
-use image::{DynamicImage, ImageBuffer, Rgb};
+use exif::{In, Tag};
 use image::imageops::FilterType;
 use image::io::Reader as ImageReader;
+use image::{DynamicImage, ImageBuffer, Rgb};
+use std::io::Cursor;
 
 use libheif_rs::{ColorSpace, HeifContext, RgbChroma};
 
@@ -20,7 +21,47 @@ pub fn convert_heic_to_jpeg(image: &Bytes) -> anyhow::Result<Bytes> {
 }
 
 pub fn shrink_jpeg(image: &Bytes) -> anyhow::Result<Bytes> {
-    let decoded = ImageReader::new(Cursor::new(image.to_vec())).with_guessed_format()?.decode()?;
+    let mut decoded = ImageReader::new(Cursor::new(image.to_vec()))
+        .with_guessed_format()?
+        .decode()?;
+
+    // rotate, if needed
+    if let Ok(exif) = exif::Reader::new().read_from_container(&mut Cursor::new(image.to_vec())) {
+        if let Some(orientation) = exif.get_field(Tag::Orientation, In::PRIMARY) {
+            if let Some(o) = orientation.value.get_uint(0) {
+                println!("Orientation: {}", o);
+
+                match o {
+                    1 => {} // correct
+                    2 => {
+                        decoded = decoded.flipv();
+                    }
+                    3 => {
+                        decoded = decoded.rotate180();
+                    }
+                    4 => {
+                        decoded = decoded.fliph();
+                    }
+                    5 => {
+                        decoded = decoded.rotate90();
+                        decoded = decoded.flipv();
+                    }
+                    6 => {
+                        decoded = decoded.rotate90();
+                    }
+                    7 => {
+                        decoded = decoded.rotate270();
+                        decoded = decoded.flipv();
+                    }
+                    8 => {
+                        decoded = decoded.rotate270();
+                    }
+                    _ => {}
+                };
+            }
+        }
+    }
+
     let width = decoded.width();
     let height = decoded.height();
 
@@ -47,3 +88,4 @@ pub fn shrink_to_jpeg(img: &Bytes, width: u32, height: u32) -> anyhow::Result<By
 
     Ok(Bytes::from(comp.data_to_vec().unwrap()))
 }
+
