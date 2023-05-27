@@ -1,30 +1,33 @@
-use std::{env, fs};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Sub};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::time::{Duration, SystemTime};
+use std::{env, fs};
 
 use anyhow::bail;
 use bytes::Bytes;
-use lettre::{Message, SmtpTransport, Transport};
 use lettre::message::{Attachment, Body, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
-use matrix_sdk::{Client, SyncSettings};
+use lettre::{Message, SmtpTransport, Transport};
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
-use oauth2::{AccessToken, AuthorizationCode, AuthUrl, ClientId, ClientSecret, CsrfToken, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl};
+use matrix_sdk::{Client, SyncSettings};
 use oauth2::basic::{BasicClient, BasicTokenResponse};
-use oauth2::RequestTokenError::ServerResponse;
 use oauth2::reqwest::async_http_client;
 use oauth2::url::Url;
+use oauth2::RequestTokenError::ServerResponse;
+use oauth2::{
+    AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl,
+    RefreshToken, Scope, TokenResponse, TokenUrl,
+};
 use serde::{Deserialize, Serialize};
 use tokio::task;
 
-use crate::matrix;
 use crate::image;
+use crate::matrix;
 use crate::message_buffer::MessageBuffer;
 
 pub async fn main() -> anyhow::Result<()> {
@@ -32,12 +35,17 @@ pub async fn main() -> anyhow::Result<()> {
     let client = matrix::create_client("photobot").await?;
     let mut bot = Bot::new();
 
-    client.clone().register_event_handler({
-        move |event: SyncMessageEvent<MessageEventContent>, room: Room| {
-            let tx = tx.clone();
-            async move { tx.send(MessageEvent { event, room }).unwrap(); }
-        }
-    }).await;
+    client
+        .clone()
+        .register_event_handler({
+            move |event: SyncMessageEvent<MessageEventContent>, room: Room| {
+                let tx = tx.clone();
+                async move {
+                    tx.send(MessageEvent { event, room }).unwrap();
+                }
+            }
+        })
+        .await;
 
     task::spawn({
         let client = client.clone();
@@ -54,21 +62,30 @@ pub async fn main() -> anyhow::Result<()> {
         let message = buffer.poll();
         let room = message.room.clone();
 
-        match bot.on_room_message(message.event, message.room, client.clone()).await {
+        match bot
+            .on_room_message(message.event, message.room, client.clone())
+            .await
+        {
             Ok(sent) => {
-                if sent { buffer.inc() }
+                if sent {
+                    buffer.inc()
+                }
 
                 let total = buffer.get_final_count();
 
                 if total > 0 {
                     if let Room::Joined(joined) = room {
-                        joined.send(matrix::text_plain(&bot.recipients_friendly(total)), None).await?;
+                        joined
+                            .send(matrix::text_plain(&bot.recipients_friendly(total)), None)
+                            .await?;
                     }
                 }
-            },
+            }
             Err(err) => {
                 if let Room::Joined(joined) = room {
-                    joined.send(matrix::text_plain(&err.to_string()), None).await?;
+                    joined
+                        .send(matrix::text_plain(&err.to_string()), None)
+                        .await?;
                 } else {
                     print!("could not run message loop: {}", err.to_string());
                 }
@@ -79,14 +96,14 @@ pub async fn main() -> anyhow::Result<()> {
 
 struct MessageEvent {
     event: SyncMessageEvent<MessageEventContent>,
-    room: Room
+    room: Room,
 }
 
 #[derive(Deserialize, Serialize)]
 struct Token {
     access_token: AccessToken,
     refresh_token: RefreshToken,
-    expires_at: SystemTime
+    expires_at: SystemTime,
 }
 
 impl Token {
@@ -95,9 +112,9 @@ impl Token {
             access_token: resp.access_token().clone(),
             refresh_token: match resp.refresh_token() {
                 Some(token) => token.clone(),
-                None => existing.unwrap().refresh_token.clone()
+                None => existing.unwrap().refresh_token.clone(),
             },
-            expires_at: SystemTime::now().add(resp.expires_in().unwrap())
+            expires_at: SystemTime::now().add(resp.expires_in().unwrap()),
         }
     }
 
@@ -110,27 +127,32 @@ struct Bot {
     http: reqwest::Client,
     oauth: BasicClient,
     token: Option<Token>,
-    only: Option<HashMap<String, String>>
+    only: Option<HashMap<String, String>>,
 }
 
 impl Bot {
     fn new() -> Bot {
-        let client_id = env::var("CLIENT_ID")
-            .expect("CLIENT_ID environmental variable not set");
+        let client_id = env::var("CLIENT_ID").expect("CLIENT_ID environmental variable not set");
 
-        let client_secret = env::var("CLIENT_SECRET")
-            .expect("CLIENT_SECRET environmental variable not set");
+        let client_secret =
+            env::var("CLIENT_SECRET").expect("CLIENT_SECRET environmental variable not set");
 
         let client = BasicClient::new(
             ClientId::new(client_id),
             Some(ClientSecret::new(client_secret)),
             AuthUrl::new("https://accounts.google.com/o/oauth2/auth".to_string()).unwrap(),
-            Some(TokenUrl::new("https://accounts.google.com/o/oauth2/token".to_string()).unwrap())
+            Some(TokenUrl::new("https://accounts.google.com/o/oauth2/token".to_string()).unwrap()),
         )
-            .set_redirect_uri(
-                RedirectUrl::new("https://accounts.vevo.com/callback".to_string()).unwrap());
+        .set_redirect_uri(
+            RedirectUrl::new("https://accounts.vevo.com/callback".to_string()).unwrap(),
+        );
 
-        Bot { oauth: client, http: reqwest::Client::new(), token: Bot::load_token(), only: None }
+        Bot {
+            oauth: client,
+            http: reqwest::Client::new(),
+            token: Bot::load_token(),
+            only: None,
+        }
     }
 
     fn save_token(&self) -> anyhow::Result<()> {
@@ -147,8 +169,8 @@ impl Bot {
             Ok(data) => {
                 println!("loaded existing token");
                 Some(serde_json::from_str(&data).unwrap())
-            },
-            Err(_) => None
+            }
+            Err(_) => None,
         }
     }
 
@@ -163,10 +185,12 @@ impl Bot {
     async fn check_auth(&mut self) -> anyhow::Result<()> {
         if let Some(token) = self.token.as_ref() {
             if token.expires_soon() {
-                let resp = self.oauth
+                let resp = self
+                    .oauth
                     .exchange_refresh_token(&token.refresh_token)
                     .add_extra_param("access_type", "offline")
-                    .request_async(async_http_client).await;
+                    .request_async(async_http_client)
+                    .await;
 
                 match resp {
                     Ok(r) => {
@@ -176,9 +200,12 @@ impl Bot {
                         println!("refreshed token");
                     }
                     Err(ServerResponse(err_resp)) => {
-                        bail!(err_resp.error_description().cloned().unwrap_or("".to_string()))
+                        bail!(err_resp
+                            .error_description()
+                            .cloned()
+                            .unwrap_or("".to_string()))
                     }
-                    _ => println!("could not refresh auth")
+                    _ => println!("could not refresh auth"),
                 }
             }
         }
@@ -187,27 +214,35 @@ impl Bot {
     }
 
     fn make_auth(&self) -> String {
-        format!("Bearer {}", self.token.as_ref().unwrap().access_token.secret())
+        format!(
+            "Bearer {}",
+            self.token.as_ref().unwrap().access_token.secret()
+        )
     }
 
     fn begin_auth(&mut self) -> Url {
-        let (auth_url, _) = self.oauth
+        let (auth_url, _) = self
+            .oauth
             .authorize_url(CsrfToken::new_random)
             .add_extra_param("access_type", "offline")
             .add_extra_param("prompt", "consent")
             .add_scope(Scope::new(
-                "https://www.googleapis.com/auth/photoslibrary.appendonly".to_string()))
+                "https://www.googleapis.com/auth/photoslibrary.appendonly".to_string(),
+            ))
             .add_scope(Scope::new(
-                "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata".to_string()))
+                "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata".to_string(),
+            ))
             .url();
 
         auth_url
     }
 
     async fn complete_auth(&mut self, code: &str) -> anyhow::Result<()> {
-        let resp = self.oauth
+        let resp = self
+            .oauth
             .exchange_code(AuthorizationCode::new(String::from(code)))
-            .request_async(async_http_client).await?;
+            .request_async(async_http_client)
+            .await?;
 
         self.token = Some(Token::new(resp, None));
         self.save_token()?;
@@ -218,10 +253,12 @@ impl Bot {
     async fn upload_photo(&self, photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
         if self.token.is_none() {
             println!("no authorization; skipping upload");
-            return Ok(())
+            return Ok(());
         }
 
-        let resp = self.http.post("https://photoslibrary.googleapis.com/v1/uploads")
+        let resp = self
+            .http
+            .post("https://photoslibrary.googleapis.com/v1/uploads")
             .header("Authorization", self.make_auth())
             .header("Content-Type", "application/octet-stream")
             .header("X-Goog-Upload-Content-Type", mime_type)
@@ -233,7 +270,8 @@ impl Bot {
         let token = resp.text().await?;
         let album_id = env::var("ALBUM_ID").expect("ALBUM_ID environmental variable not set");
 
-        let body = format!("{{
+        let body = format!(
+            "{{
             \"albumId\": \"{}\",
                 \"newMediaItems\": [
                     {{
@@ -244,9 +282,15 @@ impl Bot {
                         }}
                     }}
                 ]
-            }}", album_id, get_filename(mime_type), token);
+            }}",
+            album_id,
+            get_filename(mime_type),
+            token
+        );
 
-        let resp = self.http.post("https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate")
+        let resp = self
+            .http
+            .post("https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate")
             .header("Authorization", self.make_auth())
             .header("Content-Type", "application/json")
             .body(body)
@@ -266,12 +310,12 @@ impl Bot {
         &mut self,
         event: SyncMessageEvent<MessageEventContent>,
         room: Room,
-        client: Client
+        client: Client,
     ) -> anyhow::Result<bool> {
         // text messages
         if let Some((joined, _, message)) =
-                matrix::get_text_message(event.clone(), room.clone(), client.clone()).await {
-
+            matrix::get_text_message(event.clone(), room.clone(), client.clone()).await
+        {
             // start the auth process
             if let Some(_) = matrix::get_command("auth", &message) {
                 match self.check_auth().await {
@@ -285,12 +329,16 @@ impl Bot {
 
             // see what's going on
             } else if let Some(_) = matrix::get_command("who", &message) {
-                joined.send(matrix::text_plain(&self.recipients_friendly(0)), None).await?;
+                joined
+                    .send(matrix::text_plain(&self.recipients_friendly(0)), None)
+                    .await?;
 
             // reset the recipients
             } else if let Some(_) = matrix::get_command("reset", &message) {
                 self.only = None;
-                joined.send(matrix::text_plain(&self.recipients_friendly(0)), None).await?;
+                joined
+                    .send(matrix::text_plain(&self.recipients_friendly(0)), None)
+                    .await?;
 
             // help!
             } else if let Some(_) = matrix::get_command("help", &message) {
@@ -299,7 +347,8 @@ impl Bot {
                     "to mark: Only send photos to Mark.",
                     "to mark jane: Only send photos to Mark and Jane.",
                     "not mark: Don't send photos to Mark.",
-                    "reset: Send photos to everyone."];
+                    "reset: Send photos to everyone.",
+                ];
 
                 let html = vec![
                     "<ul>",
@@ -308,64 +357,85 @@ impl Bot {
                     "<li><strong>to mark jane</strong>: Only send photos to Mark and Jane.</li>",
                     "<li><strong>not mark</strong>: Don't send photos to Mark.</li>",
                     "<li><strong>reset</strong>: Send photos to everyone.</li>",
-                    "</ul>"];
+                    "</ul>",
+                ];
 
-                joined.send(matrix::text_html(&text.join("\n"), &html.join("\n")), None).await?;
+                joined
+                    .send(matrix::text_html(&text.join("\n"), &html.join("\n")), None)
+                    .await?;
 
             // skip some recipients
             } else if let Some(command) = matrix::get_command("not", &message) {
                 let recipients = self.command_as_recipients(command)?;
                 let mut filtered = self.recipients();
-                for skip in recipients { filtered.remove(&skip); }
+                for skip in recipients {
+                    filtered.remove(&skip);
+                }
                 self.only = Some(filtered.clone());
 
-                joined.send(matrix::text_plain(&self.recipients_friendly(0)), None).await?;
+                joined
+                    .send(matrix::text_plain(&self.recipients_friendly(0)), None)
+                    .await?;
 
                 println!("only sending to {:?}", self.only);
 
             // only send to some recipients
-            } else if let Some(command) = matrix::find_command(vec!["to", "only"], &message) {
+            } else if let Some(command) =
+                matrix::find_command(vec!["to", "send to", "only"], &message)
+            {
                 let recipients = self.command_as_recipients(command)?;
                 let all = Bot::all_recipients();
                 let mut filtered: HashMap<String, String> = HashMap::new();
-                for to in &recipients { filtered.insert(to.clone(), all[to].clone()); }
+                for to in &recipients {
+                    filtered.insert(to.clone(), all[to].clone());
+                }
                 self.only = Some(filtered.clone());
 
-                joined.send(matrix::text_plain(&self.recipients_friendly(0)), None).await?;
+                joined
+                    .send(matrix::text_plain(&self.recipients_friendly(0)), None)
+                    .await?;
 
                 println!("only sending to {:?}", self.only);
 
             // finish up the auth process
             } else if self.token.is_none() {
                 self.complete_auth(&message).await?;
-                joined.send(matrix::text_plain("Login successful!"), None).await?;
+                joined
+                    .send(matrix::text_plain("Login successful!"), None)
+                    .await?;
             }
         }
 
         // photos
         if let Some((_, _, uri, info)) =
-                matrix::get_image_message(event.clone(), room.clone(), client.clone()).await {
-
+            matrix::get_image_message(event.clone(), room.clone(), client.clone()).await
+        {
             let photo = &matrix::download_photo(&uri).await?;
             let jpeg = image::shrink_jpeg(photo)?;
-            self.send_photo(&jpeg, &photo, &info.mimetype.unwrap()).await?;
-            return Ok(true)
+            self.send_photo(&jpeg, &photo, &info.mimetype.unwrap())
+                .await?;
+            return Ok(true);
         }
 
         // files
         if let Some((joined, _, uri, info)) =
-                matrix::get_file_message(event.clone(), room.clone(), client.clone()).await {
-
+            matrix::get_file_message(event.clone(), room.clone(), client.clone()).await
+        {
             match info.mimetype.as_deref() {
                 Some("image/heic") | Some("image/heif") => {
                     let photo = &matrix::download_photo(&uri).await?;
                     let jpeg = image::convert_heic_to_jpeg(photo)?;
-                    self.send_photo(&jpeg, &photo, &info.mimetype.unwrap()).await?;
-                    return Ok(true)
-                },
+                    self.send_photo(&jpeg, &photo, &info.mimetype.unwrap())
+                        .await?;
+                    return Ok(true);
+                }
                 _ => {
-                    joined.send(matrix::text_plain(
-                        "I don't know what to do with that file. :("), None).await?;
+                    joined
+                        .send(
+                            matrix::text_plain("I don't know what to do with that file. :("),
+                            None,
+                        )
+                        .await?;
                 }
             };
         }
@@ -373,14 +443,21 @@ impl Bot {
         Ok(false)
     }
 
-    async fn send_photo(&mut self, jpeg: &Bytes, photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
+    async fn send_photo(
+        &mut self,
+        jpeg: &Bytes,
+        photo: &Bytes,
+        mime_type: &str,
+    ) -> anyhow::Result<()> {
         send_emails(jpeg, "image/jpeg", self.recipients().values())?;
 
         match self.check_auth().await {
             Ok(_) => self.upload_photo(photo, mime_type).await?,
             Err(err) => bail!(
                 "The photo was sent, but there was an error uploading to Google Photos: {:?}. \
-                You may want to try authorizing again.", err)
+                You may want to try authorizing again.",
+                err
+            ),
         }
 
         Ok(())
@@ -394,7 +471,7 @@ impl Bot {
     fn recipients(&self) -> HashMap<String, String> {
         match self.only.clone() {
             Some(recipients) => recipients,
-            None => Bot::all_recipients()
+            None => Bot::all_recipients(),
         }
     }
 
@@ -407,12 +484,12 @@ impl Bot {
 
             // allow sending to the Google album only
             if r == "google" {
-                return Ok(HashSet::new())
+                return Ok(HashSet::new());
             }
 
             match all.get(&r) {
                 Some(_) => collected.insert(r.to_string()),
-                None => bail!("I don't know who {} is!", recip)
+                None => bail!("I don't know who {} is!", recip),
             };
         }
 
@@ -420,9 +497,7 @@ impl Bot {
     }
 
     fn recipients_friendly(&self, total: usize) -> String {
-        let mut rec: Vec<String> = self.recipients().keys()
-            .map(|k| name_case(k))
-            .collect();
+        let mut rec: Vec<String> = self.recipients().keys().map(|k| name_case(k)).collect();
 
         rec.sort();
 
@@ -459,28 +534,24 @@ fn get_filename(mime_type: &str) -> String {
 
     match ext.as_str() {
         "jpeg" => "photo.jpg".to_string(),
-        _ => format!("photo.{}", ext)
+        _ => format!("photo.{}", ext),
     }
 }
 
 // TODO: this should be async
 fn send_emails<'a, I>(photo: &Bytes, mime_type: &str, to: I) -> anyhow::Result<()>
 where
-    I: Iterator<Item = &'a String>
+    I: Iterator<Item = &'a String>,
 {
     let to = Vec::from_iter(to);
 
-    let username = env::var("SMTP_USERNAME")
-        .expect("SMTP_USERNAME environmental variable not set");
+    let username = env::var("SMTP_USERNAME").expect("SMTP_USERNAME environmental variable not set");
 
-    let password = env::var("SMTP_PASSWORD")
-        .expect("SMTP_PASSWORD environmental variable not set");
+    let password = env::var("SMTP_PASSWORD").expect("SMTP_PASSWORD environmental variable not set");
 
-    let server = env::var("SMTP_SERVER")
-        .expect("SMTP_SERVER environmental variable not set");
+    let server = env::var("SMTP_SERVER").expect("SMTP_SERVER environmental variable not set");
 
-    let from = env::var("SMTP_FROM")
-        .expect("SMTP_FROM environmental variable not set");
+    let from = env::var("SMTP_FROM").expect("SMTP_FROM environmental variable not set");
 
     let creds = Credentials::new(username, password);
     let body = Body::new(photo.to_vec());
@@ -495,16 +566,13 @@ where
             .from(from.parse()?)
             .to(address.parse()?)
             .subject("Photo")
-            .multipart(
-                MultiPart::mixed()
-                    .singlepart(Attachment::new(get_filename(mime_type)).body(
-                        body.clone(),
-                        mime_type.parse()?))
-            )?;
+            .multipart(MultiPart::mixed().singlepart(
+                Attachment::new(get_filename(mime_type)).body(body.clone(), mime_type.parse()?),
+            ))?;
 
         match mailer.send(&email) {
             Ok(_) => println!("Sent photo to {}", address),
-            Err(e) => panic!("Could not send email: {:?}", e)
+            Err(e) => panic!("Could not send email: {:?}", e),
         }
     }
 
