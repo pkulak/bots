@@ -68,21 +68,30 @@ pub fn shrink_jpeg(image: &Bytes) -> anyhow::Result<Bytes> {
     shrink_to_jpeg(&Bytes::from(decoded.into_bytes()), width, height)
 }
 
+const WIDTH: u32 = 2560;
+const HEIGHT: u32 = 1600;
+
 pub fn shrink_to_jpeg(img: &Bytes, width: u32, height: u32) -> anyhow::Result<Bytes> {
     println!("resizing");
 
     let buffer = ImageBuffer::<Rgb<u8>, Vec<u8>>::from_raw(width, height, img.to_vec()).unwrap();
-    let image = DynamicImage::from(buffer).resize(1280, 800, FilterType::Lanczos3);
+    let image = DynamicImage::from(buffer);
+
+    let resized = if width > WIDTH || height > HEIGHT {
+        image.resize(WIDTH, HEIGHT, FilterType::Lanczos3)
+    } else {
+        image
+    };
 
     println!("encoding as JPEG");
 
     let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
 
-    comp.set_size(image.width() as usize, image.height() as usize);
+    comp.set_size(resized.width() as usize, resized.height() as usize);
     comp.set_mem_dest();
     comp.start_compress();
 
-    comp.write_scanlines(image.as_bytes());
+    comp.write_scanlines(resized.as_bytes());
 
     comp.finish_compress();
 
