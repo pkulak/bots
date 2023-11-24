@@ -1,35 +1,34 @@
-use std::env;
 use anyhow::{bail, Result};
 use bytes::Bytes;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::env;
 
 #[derive(Serialize)]
 struct Body<'a> {
     prompt: &'a str,
     n: usize,
-    size: &'a str
+    size: &'a str,
 }
 
 #[derive(Deserialize)]
 struct Data {
-    url: String
+    url: String,
 }
 
 #[derive(Deserialize)]
 struct Response {
-    data: Vec<Data>
+    data: Vec<Data>,
 }
 
 pub async fn generate_image(prompt: &str) -> Result<Bytes> {
     let client = reqwest::Client::new();
 
-    let auth = env::var("OPENAI_KEY")
-        .expect("OPENAI_KEY environmental variable not set");
+    let auth = env::var("OPENAI_KEY").expect("OPENAI_KEY environmental variable not set");
 
     let body = Body {
         prompt,
         n: 1,
-        size: "1024x1024"
+        size: "1024x1024",
     };
 
     let response = client
@@ -41,7 +40,10 @@ pub async fn generate_image(prompt: &str) -> Result<Bytes> {
         .await?;
 
     if !response.status().is_success() {
-        bail!("unexpected response status from Open AI: {}", response.status());
+        bail!(
+            "unexpected response status from Open AI: {}",
+            response.status()
+        );
     }
 
     let body = response.json::<Response>().await?;

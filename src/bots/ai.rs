@@ -1,8 +1,8 @@
 use bytes::Buf;
-use matrix_sdk::{Client, SyncSettings};
 use matrix_sdk::room::{Joined, Room};
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
+use matrix_sdk::{Client, SyncSettings};
 use mime;
 
 use crate::ai;
@@ -27,20 +27,26 @@ async fn on_room_message(event: SyncMessageEvent<MessageEventContent>, room: Roo
 
 async fn handle_message(joined: Joined, message: &str) {
     if let Some(prompt) = matrix::get_command("show me", message) {
-        joined.send(matrix::text_plain("Let's see..."), None).await.unwrap();
+        joined
+            .send(matrix::text_plain("Let's see..."), None)
+            .await
+            .unwrap();
 
         let image = match ai::generate_image(prompt).await {
             Ok(image) => image,
             Err(e) => {
                 println!("Error creating image: {}", e);
 
-                joined.send(matrix::text_plain("Oh no! I couldn't do it. :("), None)
-                    .await.unwrap();
+                joined
+                    .send(matrix::text_plain("Oh no! I couldn't do it. :("), None)
+                    .await
+                    .unwrap();
                 return;
             }
         };
 
-        joined.send_attachment("image.png", &mime::IMAGE_PNG, &mut image.reader(), None)
+        joined
+            .send_attachment("image.png", &mime::IMAGE_PNG, &mut image.reader(), None)
             .await
             .unwrap();
     }

@@ -3,18 +3,18 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow;
-use chrono::{Datelike, DateTime, Duration, Timelike, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc};
 use chrono_tz::US::Pacific;
 use futures::executor;
-use matrix_sdk::{Client, SyncSettings};
 use matrix_sdk::room::{Joined, Room};
-use matrix_sdk::ruma::{RoomId, UserId};
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
-use rusqlite::{Connection, params};
+use matrix_sdk::ruma::{RoomId, UserId};
+use matrix_sdk::{Client, SyncSettings};
+use rusqlite::{params, Connection};
 use rust_decimal::prelude::ToPrimitive;
-use rusty_money::{iso, Money};
 use rusty_money::iso::Currency;
+use rusty_money::{iso, Money};
 use string_builder::Builder;
 use tokio::task;
 
@@ -29,18 +29,20 @@ pub async fn main() -> anyhow::Result<()> {
     let client = matrix::create_client("moneybot").await?;
     let bot = Arc::new(Mutex::new(Bot::new()?));
 
-    client.register_event_handler({
-        let bot = bot.clone();
-
-        move |event: SyncMessageEvent<MessageEventContent>, room: Room, client: Client| {
+    client
+        .register_event_handler({
             let bot = bot.clone();
 
-            task::spawn_blocking(move || {
-                executor::block_on(bot.lock().unwrap().on_room_message(event, room, client))
-                    .expect("could not run message handler");
-            })
-        }
-    }).await;
+            move |event: SyncMessageEvent<MessageEventContent>, room: Room, client: Client| {
+                let bot = bot.clone();
+
+                task::spawn_blocking(move || {
+                    executor::block_on(bot.lock().unwrap().on_room_message(event, room, client))
+                        .expect("could not run message handler");
+                })
+            }
+        })
+        .await;
 
     // manage weekly allowance
     task::spawn({
@@ -76,12 +78,15 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
         .expect("not an integer");
 
     let morning = now
-        .with_hour(9).unwrap()
-        .with_minute(0).unwrap()
-        .with_second(0).unwrap();
+        .with_hour(9)
+        .unwrap()
+        .with_minute(0)
+        .unwrap()
+        .with_second(0)
+        .unwrap();
 
-    let next_friday = morning + Duration::days(
-        5 - morning.weekday().number_from_monday().to_i64().unwrap());
+    let next_friday =
+        morning + Duration::days(5 - morning.weekday().number_from_monday().to_i64().unwrap());
 
     let next_friday = if next_friday < now {
         next_friday + Duration::days(7)
@@ -98,14 +103,33 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
 
     {
         let bot = bot.lock().unwrap();
-        bot.send("@phil:kulak.us", "@chase:kulak.us", chase, Some("allowance"))?;
-        bot.send("@phil:kulak.us", "@charlie:kulak.us", charlie, Some("allowance"))?;
+        bot.send(
+            "@phil:kulak.us",
+            "@chase:kulak.us",
+            chase,
+            Some("allowance"),
+        )?;
+        bot.send(
+            "@phil:kulak.us",
+            "@charlie:kulak.us",
+            charlie,
+            Some("allowance"),
+        )?;
     }
 
-    client.room_send(&room_id, text_plain(
-        format!("Sent {} to Chase and {} to Charlie.",
-                Money::from_minor(chase, iso::USD),
-                Money::from_minor(charlie, iso::USD)).as_str()), None)
+    client
+        .room_send(
+            &room_id,
+            text_plain(
+                format!(
+                    "Sent {} to Chase and {} to Charlie.",
+                    Money::from_minor(chase, iso::USD),
+                    Money::from_minor(charlie, iso::USD)
+                )
+                .as_str(),
+            ),
+            None,
+        )
         .await?;
 
     // sleep for a tad just to make sure we cycle over
@@ -120,7 +144,7 @@ struct Transaction {
     receiver: String,
     amount: i64,
     date: String,
-    memo: Option<String>
+    memo: Option<String>,
 }
 
 #[derive(Clone)]
@@ -129,11 +153,11 @@ struct BalanceTransaction<'a> {
     user: Option<UserId>,
     amount: Money<'a, Currency>,
     date: DateTime<chrono_tz::Tz>,
-    memo: Option<String>
+    memo: Option<String>,
 }
 
 struct Bot {
-    conn: Connection
+    conn: Connection,
 }
 
 impl Bot {
@@ -144,7 +168,9 @@ impl Bot {
 
         let db_created = !db_file.exists();
 
-        let bot = Bot { conn: Connection::open(db_file)? };
+        let bot = Bot {
+            conn: Connection::open(db_file)?,
+        };
 
         if db_created {
             bot.init()?;
@@ -154,7 +180,8 @@ impl Bot {
     }
 
     fn init(self: &Bot) -> anyhow::Result<()> {
-        self.conn.execute("
+        self.conn.execute(
+            "
             CREATE TABLE transactions (
                 id INTEGER PRIMARY KEY,
                 sender TEXT,
@@ -163,18 +190,25 @@ impl Bot {
                 date TEXT NOT NULL,
                 memo TEXT
             )",
-            []
+            [],
         )?;
 
-        self.conn.execute("CREATE INDEX transaction_senders ON transactions (sender)", [])?;
-        self.conn.execute("CREATE INDEX transaction_receivers ON transactions (receiver)", [])?;
+        self.conn.execute(
+            "CREATE INDEX transaction_senders ON transactions (sender)",
+            [],
+        )?;
+        self.conn.execute(
+            "CREATE INDEX transaction_receivers ON transactions (receiver)",
+            [],
+        )?;
 
-        self.conn.execute("
+        self.conn.execute(
+            "
             CREATE TABLE users (
                 user_id TEXT PRIMARY KEY,
                 min_balance INTEGER NOT NULL
             )",
-            []
+            [],
         )?;
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -185,7 +219,7 @@ impl Bot {
             receiver: "@gwen:kulak.us".to_string(),
             amount: 100_000,
             date: now.to_string(),
-            memo: Some("seed value".to_string())
+            memo: Some("seed value".to_string()),
         })?;
 
         self.insert(&Transaction {
@@ -193,7 +227,7 @@ impl Bot {
             receiver: "@phil:kulak.us".to_string(),
             amount: 100_000,
             date: now,
-            memo: Some("seed value".to_string())
+            memo: Some("seed value".to_string()),
         })?;
 
         println!("initialized new database");
@@ -206,75 +240,78 @@ impl Bot {
         from: &str,
         to: &str,
         amount: i64,
-        memo: Option<&str>
+        memo: Option<&str>,
     ) -> anyhow::Result<()> {
         self.insert(&Transaction {
             sender: Some(from.to_string()),
             receiver: to.to_string(),
             amount,
             date: chrono::Utc::now().to_rfc3339(),
-            memo: memo.map(|s| s.to_string())
+            memo: memo.map(|s| s.to_string()),
         })?;
 
         Ok(())
     }
 
     fn insert(self: &Bot, t: &Transaction) -> anyhow::Result<()> {
-        self.conn.execute("
+        self.conn.execute(
+            "
             INSERT INTO transactions
                 (sender, receiver, amount, date, memo)
             VALUES
                 (?1, ?2, ?3, ?4, ?5)",
-            params![t.sender, t.receiver, t.amount, t.date, t.memo]
+            params![t.sender, t.receiver, t.amount, t.date, t.memo],
         )?;
 
         Ok(())
     }
 
     fn get_balance(self: &Bot, user_id: &UserId) -> anyhow::Result<Money<Currency>> {
-        let mut stmt = self.conn
-            .prepare("
+        let mut stmt = self.conn.prepare(
+            "
                 SELECT COALESCE(SUM(amount), 0)
                 FROM transactions
                 WHERE sender = ?1
-            ")?;
+            ",
+        )?;
 
-        let sent: i64 = stmt
-            .query_row(params![user_id.as_str()], |row| row.get(0))?;
+        let sent: i64 = stmt.query_row(params![user_id.as_str()], |row| row.get(0))?;
 
-        let mut stmt = self.conn
-            .prepare("
+        let mut stmt = self.conn.prepare(
+            "
                 SELECT COALESCE(SUM(amount), 0)
                 FROM transactions
                 WHERE receiver = ?1
-            ")?;
+            ",
+        )?;
 
-        let received: i64 = stmt
-            .query_row(params![user_id.as_str()], |row| row.get(0))?;
+        let received: i64 = stmt.query_row(params![user_id.as_str()], |row| row.get(0))?;
 
         Ok(Money::from_minor(received - sent, iso::USD))
     }
 
     fn get_min_balance(self: &Bot, user_id: &UserId) -> rusqlite::Result<Money<Currency>> {
-        let mut stmt = self.conn
-            .prepare("
+        let mut stmt = self.conn.prepare(
+            "
                 SELECT COALESCE(SUM(min_balance), 0)
                 FROM users
                 WHERE user_id = ?1
-            ")?;
+            ",
+        )?;
 
-        let min:i64 = stmt.query_row(params![user_id.as_str()], |row| row.get(0))?;
+        let min: i64 = stmt.query_row(params![user_id.as_str()], |row| row.get(0))?;
         Ok(Money::from_minor(min, iso::USD))
     }
 
     fn get_ledger(self: &Bot, user_id: &UserId) -> anyhow::Result<Vec<Transaction>> {
-        let mut stmt = self.conn
-            .prepare("
+        let mut stmt = self.conn.prepare(
+            "
                 SELECT *
                 FROM transactions
                 WHERE receiver = ?1 OR sender = ?1
                 ORDER BY date DESC LIMIT 5
-            ")?;
+            ",
+        )?;
 
         let res = stmt.query_map(params![user_id.as_str()], |row| {
             Ok(Transaction {
@@ -282,7 +319,7 @@ impl Bot {
                 receiver: row.get("receiver")?,
                 amount: row.get("amount")?,
                 date: row.get("date")?,
-                memo: row.get("memo")?
+                memo: row.get("memo")?,
             })
         })?;
 
@@ -290,25 +327,29 @@ impl Bot {
     }
 
     fn set_min_balance(self: &Bot, user_id: &UserId, min_balance: i64) -> anyhow::Result<()> {
-        self.conn.execute("
+        self.conn.execute(
+            "
             INSERT INTO users
                 (user_id, min_balance)
             VALUES
                 (?1, ?2)
             ON CONFLICT(user_id) DO UPDATE SET min_balance=?2",
-            params![user_id.as_str(), min_balance]
+            params![user_id.as_str(), min_balance],
         )?;
 
         Ok(())
     }
 
     fn id_exists(self: &Bot, user_id: &UserId) -> anyhow::Result<bool> {
-        let mut stmt = self.conn
-            .prepare("
+        let mut stmt = self
+            .conn
+            .prepare(
+                "
                 SELECT COUNT(*)
                 FROM transactions
                 WHERE sender = ?1 OR receiver = ?1
-            ")
+            ",
+            )
             .unwrap();
 
         let total: i64 = stmt
@@ -322,7 +363,7 @@ impl Bot {
         self: &Bot,
         event: SyncMessageEvent<MessageEventContent>,
         room: Room,
-        client: Client
+        client: Client,
     ) -> anyhow::Result<()> {
         if let Some((room, sender, message)) = matrix::get_text_message(event, room, client).await {
             if let Some(command) = matrix::get_command("balance", &message) {
@@ -330,7 +371,8 @@ impl Bot {
             } else if let Some(command) = matrix::get_command("send", &message) {
                 self.on_send_message(room, sender, command).await?;
             } else if let Some(command) = matrix::get_command("set min", &message) {
-                self.on_set_min_balance_message(room, sender, command).await?;
+                self.on_set_min_balance_message(room, sender, command)
+                    .await?;
             } else if let Some(command) = matrix::get_command("get min", &message) {
                 self.on_get_min_balance_message(room, command).await?;
             } else if let Some(command) = matrix::get_command("ledger", &message) {
@@ -345,7 +387,7 @@ impl Bot {
         self: &Bot,
         room: Joined,
         sender: UserId,
-        command: &str
+        command: &str,
     ) -> anyhow::Result<()> {
         let sender = matrix::normalize_sender(sender, command)?;
         let balance = self.get_balance(&sender)?;
@@ -357,16 +399,17 @@ impl Bot {
         self: &Bot,
         room: Joined,
         sender: UserId,
-        command: &str
+        command: &str,
     ) -> anyhow::Result<()> {
-        let args: Vec<&str> = command.split(' ')
+        let args: Vec<&str> = command
+            .split(' ')
             .filter(|w| !w.eq_ignore_ascii_case("to"))
             .filter(|w| !w.trim().is_empty())
             .collect();
 
         if args.len() < 2 {
             println!("invalid send command {}", command);
-            return Ok(())
+            return Ok(());
         }
 
         let (receiver, amount) = if let Ok(amount) = Money::from_str(args[0], iso::USD) {
@@ -374,36 +417,48 @@ impl Bot {
         } else if let Ok(amount) = Money::from_str(args[1], iso::USD) {
             (matrix::create_user_id(args[0])?, amount)
         } else {
-            room.send(text_plain("Please use a valid amount."), None).await?;
-            return Ok(())
+            room.send(text_plain("Please use a valid amount."), None)
+                .await?;
+            return Ok(());
         };
 
         if amount.is_negative() && !matrix::is_admin(&sender) {
-            room.send(text_plain(
-                "You are not allowed to take money, only send it."), None).await?;
-            return Ok(())
+            room.send(
+                text_plain("You are not allowed to take money, only send it."),
+                None,
+            )
+            .await?;
+            return Ok(());
         }
 
         if amount.is_zero() {
-            room.send(text_plain("Wait... what's the point of that?"), None).await?;
-            return Ok(())
+            room.send(text_plain("Wait... what's the point of that?"), None)
+                .await?;
+            return Ok(());
         }
 
         if (self.get_balance(&sender)? - amount.clone()) < self.get_min_balance(&sender)? {
-            room.send(text_plain("You don't have enough money!"), None).await?;
-            return Ok(())
+            room.send(text_plain("You don't have enough money!"), None)
+                .await?;
+            return Ok(());
         }
 
         if !self.id_exists(&receiver)? && !matrix::is_admin(&sender) {
-            room.send(text_plain(
-                &format!("{} isn't a valid user.", receiver.localpart())), None).await?;
-            return Ok(())
+            room.send(
+                text_plain(&format!("{} isn't a valid user.", receiver.localpart())),
+                None,
+            )
+            .await?;
+            return Ok(());
         }
 
         if sender == receiver {
-            room.send(text_plain(
-                "So... you want to send money to yourself, from yourself?"), None).await?;
-            return Ok(())
+            room.send(
+                text_plain("So... you want to send money to yourself, from yourself?"),
+                None,
+            )
+            .await?;
+            return Ok(());
         }
 
         let memo = command.split(" for ").nth(1).map(|s| s.to_string());
@@ -413,17 +468,28 @@ impl Bot {
             receiver: receiver.to_string(),
             amount: matrix::money_to_i64(&amount),
             date: chrono::Utc::now().to_rfc3339(),
-            memo: memo.clone()
+            memo: memo.clone(),
         })?;
 
         let pretty_id = matrix::pretty_user_id(&receiver);
 
         if memo.is_some() {
-            room.send(text_plain(
-                &format!("Sent {} to {} for {}.", amount, pretty_id, memo.unwrap())), None).await?;
+            room.send(
+                text_plain(&format!(
+                    "Sent {} to {} for {}.",
+                    amount,
+                    pretty_id,
+                    memo.unwrap()
+                )),
+                None,
+            )
+            .await?;
         } else {
-            room.send(text_plain(
-                &format!("Sent {} to {}.", amount, pretty_id)), None).await?;
+            room.send(
+                text_plain(&format!("Sent {} to {}.", amount, pretty_id)),
+                None,
+            )
+            .await?;
         };
 
         Ok(())
@@ -433,18 +499,23 @@ impl Bot {
         self: &Bot,
         room: Joined,
         sender: UserId,
-        command: &str
+        command: &str,
     ) -> anyhow::Result<()> {
         if !matrix::is_admin(&sender) {
-            room.send(text_plain("You are not allowed to set minimum balances."), None).await?;
-            return Ok(())
+            room.send(
+                text_plain("You are not allowed to set minimum balances."),
+                None,
+            )
+            .await?;
+            return Ok(());
         }
 
         let args: Vec<&str> = command.split(' ').collect();
 
         if args.len() != 2 {
-            room.send(text_plain("Usage: set min [user] [amount]."), None).await?;
-            return Ok(())
+            room.send(text_plain("Usage: set min [user] [amount]."), None)
+                .await?;
+            return Ok(());
         }
 
         let user_id = matrix::create_user_id(args[0])?;
@@ -452,16 +523,23 @@ impl Bot {
         let amount = match Money::from_str(args[1], iso::USD) {
             Ok(amount) => amount,
             Err(_) => {
-                room.send(text_plain(&format!("Invalid amount: {}", args[1])), None).await?;
-                return Ok(())
+                room.send(text_plain(&format!("Invalid amount: {}", args[1])), None)
+                    .await?;
+                return Ok(());
             }
         };
 
         self.set_min_balance(&user_id, matrix::money_to_i64(&amount))?;
 
-        room.send(text_plain(&format!(
-            "Set minimum balance for {} to {}", matrix::pretty_user_id(&user_id), amount)), None)
-            .await?;
+        room.send(
+            text_plain(&format!(
+                "Set minimum balance for {} to {}",
+                matrix::pretty_user_id(&user_id),
+                amount
+            )),
+            None,
+        )
+        .await?;
 
         Ok(())
     }
@@ -469,13 +547,14 @@ impl Bot {
     async fn on_get_min_balance_message(
         self: &Bot,
         room: Joined,
-        command: &str
+        command: &str,
     ) -> anyhow::Result<()> {
         let args: Vec<&str> = command.split(' ').collect();
 
         if args.len() != 1 {
-            room.send(text_plain("Usage: get min [user]."), None).await?;
-            return Ok(())
+            room.send(text_plain("Usage: get min [user]."), None)
+                .await?;
+            return Ok(());
         }
 
         let user_id = matrix::create_user_id(args[0])?;
@@ -490,7 +569,7 @@ impl Bot {
         self: &Bot,
         room: Joined,
         sender: UserId,
-        command: &str
+        command: &str,
     ) -> anyhow::Result<()> {
         let user_id = {
             let user_id = command.split(' ').next().unwrap();
@@ -505,44 +584,55 @@ impl Bot {
         let running_balance = &mut self.get_balance(&user_id)?;
 
         // grab our ledger and convert to balance entries
-        let ledger: Vec<BalanceTransaction> = self.get_ledger(&user_id)?.into_iter().map(|tr| {
-            let (user, amount) = if tr.receiver == user_id.as_str() {
-                // I'm the receiver
-                (tr.sender, tr.amount)
-            } else {
-                // If I'm the sender, it's a loss; swap the sign
-                (Some(tr.receiver), -tr.amount)
-            };
+        let ledger: Vec<BalanceTransaction> = self
+            .get_ledger(&user_id)?
+            .into_iter()
+            .map(|tr| {
+                let (user, amount) = if tr.receiver == user_id.as_str() {
+                    // I'm the receiver
+                    (tr.sender, tr.amount)
+                } else {
+                    // If I'm the sender, it's a loss; swap the sign
+                    (Some(tr.receiver), -tr.amount)
+                };
 
-            let transaction = BalanceTransaction {
-                balance: running_balance.clone(),
-                user: user.map(|l| matrix::create_user_id(&l).unwrap()),
-                amount: Money::from_minor(amount, iso::USD),
-                date: Pacific.timestamp_millis(
-                    DateTime::<Utc>::from_str(&tr.date).unwrap().timestamp_millis()),
-                memo: tr.memo
-            };
+                let transaction = BalanceTransaction {
+                    balance: running_balance.clone(),
+                    user: user.map(|l| matrix::create_user_id(&l).unwrap()),
+                    amount: Money::from_minor(amount, iso::USD),
+                    date: Pacific.timestamp_millis(
+                        DateTime::<Utc>::from_str(&tr.date)
+                            .unwrap()
+                            .timestamp_millis(),
+                    ),
+                    memo: tr.memo,
+                };
 
-            *running_balance = Money::from_decimal(
-                running_balance.amount() - transaction.amount.amount(),
-                iso::USD);
+                *running_balance = Money::from_decimal(
+                    running_balance.amount() - transaction.amount.amount(),
+                    iso::USD,
+                );
 
-            transaction
-        }).collect();
+                transaction
+            })
+            .collect();
 
         // build up our HTML
         let mut html_builder = Builder::default();
 
         html_builder.append("<table>");
         html_builder.append(
-            "<tr><th>Balance</th><th>Amount</th><th>To/From</th><th>For</th><th>Date</th></tr>");
+            "<tr><th>Balance</th><th>Amount</th><th>To/From</th><th>For</th><th>Date</th></tr>",
+        );
 
         for tr in ledger.clone() {
             html_builder.append(format!(
                 "<tr><td>{}<td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 tr.balance,
                 tr.amount,
-                tr.user.map(|u| matrix::pretty_user_id(&u)).unwrap_or_default(),
+                tr.user
+                    .map(|u| matrix::pretty_user_id(&u))
+                    .unwrap_or_default(),
                 tr.memo.unwrap_or_default(),
                 tr.date.format("%b %d")
             ));
@@ -564,14 +654,16 @@ impl Bot {
             };
 
             if tr.amount.is_negative() {
-                txt_builder.append(format!("On {} you sent {} {}{}.",
+                txt_builder.append(format!(
+                    "On {} you sent {} {}{}.",
                     tr.date.format("%b %d"),
                     tr.user.map(|u| matrix::pretty_user_id(&u)).unwrap(),
                     tr.amount * -1,
                     memo
                 ));
             } else {
-                txt_builder.append(format!("On {} {} sent you {}{}.",
+                txt_builder.append(format!(
+                    "On {} {} sent you {}{}.",
                     tr.date.format("%b %d"),
                     tr.user.map(|u| matrix::pretty_user_id(&u)).unwrap(),
                     tr.amount,
@@ -579,13 +671,20 @@ impl Bot {
                 ));
             }
             txt_builder.append("\n");
-        };
+        }
 
         if command.to_lowercase().contains("plain") {
-            room.send(text_plain(&txt_builder.string().unwrap()), None).await?;
+            room.send(text_plain(&txt_builder.string().unwrap()), None)
+                .await?;
         } else {
-            room.send(text_html(
-                &txt_builder.string().unwrap(), &html_builder.string().unwrap()), None).await?;
+            room.send(
+                text_html(
+                    &txt_builder.string().unwrap(),
+                    &html_builder.string().unwrap(),
+                ),
+                None,
+            )
+            .await?;
         }
 
         Ok(())

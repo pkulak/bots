@@ -97,4 +97,3 @@ pub fn shrink_to_jpeg(img: &Bytes, width: u32, height: u32) -> anyhow::Result<By
 
     Ok(Bytes::from(comp.data_to_vec().unwrap()))
 }
-

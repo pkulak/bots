@@ -1,19 +1,21 @@
-use std::env;
 use bytes::Bytes;
+use std::env;
 
-use matrix_sdk::{Client, SyncSettings};
-use matrix_sdk::ClientConfig;
 use matrix_sdk::room::Joined;
 use matrix_sdk::room::Room;
-use matrix_sdk::ruma::{MxcUri, ServerName, UserId};
-use matrix_sdk::ruma::events::AnyMessageEventContent;
-use matrix_sdk::ruma::events::room::ImageInfo;
 use matrix_sdk::ruma::events::room::member::MemberEventContent;
-use matrix_sdk::ruma::events::room::message::{FileInfo, FileMessageEventContent, ImageMessageEventContent, MessageEventContent};
 use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
+use matrix_sdk::ruma::events::room::message::{
+    FileInfo, FileMessageEventContent, ImageMessageEventContent, MessageEventContent,
+};
+use matrix_sdk::ruma::events::room::ImageInfo;
+use matrix_sdk::ruma::events::AnyMessageEventContent;
 use matrix_sdk::ruma::events::StrippedStateEvent;
 use matrix_sdk::ruma::events::SyncMessageEvent;
+use matrix_sdk::ruma::{MxcUri, ServerName, UserId};
+use matrix_sdk::ClientConfig;
+use matrix_sdk::{Client, SyncSettings};
 use reqwest::Url;
 use rust_decimal::prelude::*;
 use rusty_money::iso::Currency;
@@ -24,14 +26,15 @@ use tokio::time::Duration;
 pub async fn get_text_message(
     event: SyncMessageEvent<MessageEventContent>,
     room: Room,
-    client: Client
+    client: Client,
 ) -> Option<(Joined, UserId, String)> {
     if let Room::Joined(room) = room {
         if let SyncMessageEvent {
-            content: MessageEventContent {
-                msgtype: MessageType::Text(TextMessageEventContent { body, .. }),
-                ..
-            },
+            content:
+                MessageEventContent {
+                    msgtype: MessageType::Text(TextMessageEventContent { body, .. }),
+                    ..
+                },
             sender,
             ..
         } = event
@@ -52,15 +55,20 @@ pub async fn get_text_message(
 pub async fn get_image_message(
     event: SyncMessageEvent<MessageEventContent>,
     room: Room,
-    client: Client
+    client: Client,
 ) -> Option<(Joined, UserId, MxcUri, Box<ImageInfo>)> {
     if let Room::Joined(room) = room {
         if let SyncMessageEvent {
-            content: MessageEventContent {
-                msgtype: MessageType::Image(
-                    ImageMessageEventContent { url: Some(uri), info: Some(info), .. }),
-                ..
-            },
+            content:
+                MessageEventContent {
+                    msgtype:
+                        MessageType::Image(ImageMessageEventContent {
+                            url: Some(uri),
+                            info: Some(info),
+                            ..
+                        }),
+                    ..
+                },
             sender,
             ..
         } = event
@@ -81,15 +89,20 @@ pub async fn get_image_message(
 pub async fn get_file_message(
     event: SyncMessageEvent<MessageEventContent>,
     room: Room,
-    client: Client
+    client: Client,
 ) -> Option<(Joined, UserId, MxcUri, Box<FileInfo>)> {
     if let Room::Joined(room) = room {
         if let SyncMessageEvent {
-            content: MessageEventContent {
-                msgtype: MessageType::File(
-                    FileMessageEventContent { url: Some(uri), info: Some(info), .. }),
-                ..
-            },
+            content:
+                MessageEventContent {
+                    msgtype:
+                        MessageType::File(FileMessageEventContent {
+                            url: Some(uri),
+                            info: Some(info),
+                            ..
+                        }),
+                    ..
+                },
             sender,
             ..
         } = event
@@ -110,7 +123,7 @@ pub async fn get_file_message(
 pub fn find_command<'a>(prefixes: Vec<&str>, message: &'a str) -> Option<&'a str> {
     for prefix in &prefixes {
         if let Some(command) = get_command(prefix, message) {
-            return Option::Some(command)
+            return Option::Some(command);
         }
     }
 
@@ -122,15 +135,15 @@ pub fn get_command<'a>(prefix: &str, message: &'a str) -> Option<&'a str> {
     let lower_prefix = prefix.to_lowercase();
 
     if lower_message.eq(&lower_prefix) {
-        return Some("")
+        return Some("");
     }
 
     if lower_message.starts_with(&format!("{} ", lower_prefix)) {
-        return Some(message[prefix.len() + 1..].trim())
+        return Some(message[prefix.len() + 1..].trim());
     }
 
     if lower_message.starts_with(&format!("{}. ", lower_prefix)) {
-        return Some(message[prefix.len() + 2..].trim())
+        return Some(message[prefix.len() + 2..].trim());
     }
 
     Option::None
@@ -153,7 +166,12 @@ async fn on_room_invitation(
             // retry autojoin due to synapse sending invites, before the
             // invited user can join for more information see
             // https://github.com/matrix-org/synapse/issues/4345
-            eprintln!("Failed to join room {} ({:?}), retrying in {}s", room.room_id(), err, delay);
+            eprintln!(
+                "Failed to join room {} ({:?}), retrying in {}s",
+                room.room_id(),
+                err,
+                delay
+            );
 
             time::sleep(Duration::from_secs(delay)).await;
             delay *= 2;
@@ -168,14 +186,11 @@ async fn on_room_invitation(
 }
 
 pub async fn create_client(bot_name: &str) -> anyhow::Result<Client> {
-    let username = env::var("USERNAME")
-        .expect("USERNAME environmental variable not set");
+    let username = env::var("USERNAME").expect("USERNAME environmental variable not set");
 
-    let password = env::var("PASSWORD")
-        .expect("PASSWORD environmental variable not set");
+    let password = env::var("PASSWORD").expect("PASSWORD environmental variable not set");
 
-    let homeserver = env::var("HOMESERVER")
-        .expect("HOMESERVER environmental variable not set");
+    let homeserver = env::var("HOMESERVER").expect("HOMESERVER environmental variable not set");
 
     let mut config = dirs::config_dir().expect("no config directory found");
     config.push(bot_name);
@@ -186,7 +201,9 @@ pub async fn create_client(bot_name: &str) -> anyhow::Result<Client> {
     let homeserver_url = Url::parse(&homeserver).expect("invalid homeserver url");
     let client = Client::new_with_config(homeserver_url, client_config).unwrap();
 
-    client.login(&username, &password, None, Some(bot_name)).await?;
+    client
+        .login(&username, &password, None, Some(bot_name))
+        .await?;
 
     println!("logged in as {}", username);
 
@@ -233,7 +250,7 @@ pub fn pretty_user_id(user_id: &UserId) -> String {
     match user_id.as_str() {
         "@phil:kulak.us" => return "Dad".to_string(),
         "@gwen:kulak.us" => return "Mom".to_string(),
-        _ => ()
+        _ => (),
     }
 
     let localpart = &mut user_id.localpart().to_string();
@@ -246,8 +263,8 @@ pub fn pretty_user_id(user_id: &UserId) -> String {
 }
 
 pub fn is_admin(user_id: &UserId) -> bool {
-    user_id.as_ref().eq_ignore_ascii_case("@phil:kulak.us") ||
-        user_id.as_ref().eq_ignore_ascii_case("@gwen:kulak.us")
+    user_id.as_ref().eq_ignore_ascii_case("@phil:kulak.us")
+        || user_id.as_ref().eq_ignore_ascii_case("@gwen:kulak.us")
 }
 
 pub fn money_to_i64(money: &Money<Currency>) -> i64 {
@@ -255,7 +272,7 @@ pub fn money_to_i64(money: &Money<Currency>) -> i64 {
 }
 
 pub async fn download_photo(uri: &MxcUri) -> anyhow::Result<Bytes> {
-    let id = uri.as_str().split(' ').last().unwrap();
+    let id = uri.media_id().unwrap();
     let url = format!("https://kulak.us/_matrix/media/r0/download/kulak.us/{}", id);
 
     // download the image to memory

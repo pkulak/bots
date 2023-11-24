@@ -9,15 +9,9 @@ struct Body<'a> {
 
 async fn webook(id: &str, message: &str) -> Result<()> {
     let url = format!("http://ha.kulak.us/api/webhook/{}", id);
-    let body = Body {
-        what: message,
-    };
+    let body = Body { what: message };
 
-    let response = reqwest::Client::new()
-        .post(url)
-        .json(&body)
-        .send()
-        .await?;
+    let response = reqwest::Client::new().post(url).json(&body).send().await?;
 
     if !response.status().is_success() {
         bail!(
@@ -30,8 +24,7 @@ async fn webook(id: &str, message: &str) -> Result<()> {
 }
 
 pub async fn play_video(url: &str) -> Result<()> {
-    let id = env::var("PLAY_VIDEO")
-        .expect("PLAY_VIDEO environmental variable not set");
+    let id = env::var("PLAY_VIDEO").expect("PLAY_VIDEO environmental variable not set");
 
     println!("playing video at {}", url);
 
@@ -40,8 +33,7 @@ pub async fn play_video(url: &str) -> Result<()> {
 }
 
 pub async fn broadcast(message: &str) -> Result<()> {
-    let id = env::var("BROADCAST")
-        .expect("BROADCAST environmental variable not set");
+    let id = env::var("BROADCAST").expect("BROADCAST environmental variable not set");
 
     println!("broadcasting {}", message);
 
@@ -50,8 +42,7 @@ pub async fn broadcast(message: &str) -> Result<()> {
 }
 
 pub async fn notify(message: &str) -> Result<()> {
-    let id = env::var("NOTIFY")
-        .expect("NOTIFY environmental variable not set");
+    let id = env::var("NOTIFY").expect("NOTIFY environmental variable not set");
 
     println!("notifying {}", message);
 

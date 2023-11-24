@@ -3,16 +3,16 @@ use std::sync::mpsc::Receiver;
 pub struct MessageBuffer<'a, T> {
     counter: usize,
     buffer: Vec<T>,
-    channel: &'a Receiver<T>
+    channel: &'a Receiver<T>,
 }
 
 // todo: this needs to be async
-impl <'a, T> MessageBuffer<'a, T> {
+impl<'a, T> MessageBuffer<'a, T> {
     pub fn new(channel: &Receiver<T>) -> MessageBuffer<T> {
         MessageBuffer {
             counter: 0,
             buffer: vec![],
-            channel
+            channel,
         }
     }
 
@@ -21,7 +21,7 @@ impl <'a, T> MessageBuffer<'a, T> {
 
         // if there's anything in the buffer, pop
         if !self.buffer.is_empty() {
-            return self.buffer.pop().unwrap()
+            return self.buffer.pop().unwrap();
         }
 
         // otherwise, wait around for a new message first
@@ -36,7 +36,7 @@ impl <'a, T> MessageBuffer<'a, T> {
         if self.buffer.is_empty() {
             let ret = self.counter;
             self.counter = 0;
-            return ret
+            return ret;
         }
 
         0
