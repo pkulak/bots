@@ -63,12 +63,12 @@ async fn on_room_message(event: SyncMessageEvent<MessageEventContent>, room: Roo
     }
 }
 
-async fn handle_message(message: &String) {
-    if let Some(command) = matrix::find_command(vec!["bc", "broadcast", "say"], &message) {
+async fn handle_message(message: &str) {
+    if let Some(command) = matrix::find_command(vec!["bc", "broadcast", "say"], message) {
         webhook::broadcast(command).await.unwrap()
     }
 
-    if let Some(command) = matrix::find_command(vec!["n", "notify"], &message) {
+    if let Some(command) = matrix::find_command(vec!["n", "notify"], message) {
         webhook::notify(command).await.unwrap()
     }
 }

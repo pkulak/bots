@@ -17,7 +17,7 @@ pub fn convert_heic_to_jpeg(image: &Bytes) -> anyhow::Result<Bytes> {
     let decoded = handle.decode(ColorSpace::Rgb(RgbChroma::Rgb), false)?;
     let data = Bytes::copy_from_slice(decoded.planes().interleaved.unwrap().data);
 
-    Ok(shrink_to_jpeg(&data, handle.width(), handle.height())?)
+    shrink_to_jpeg(&data, handle.width(), handle.height())
 }
 
 pub fn shrink_jpeg(image: &Bytes) -> anyhow::Result<Bytes> {

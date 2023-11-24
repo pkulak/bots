@@ -255,7 +255,7 @@ pub fn money_to_i64(money: &Money<Currency>) -> i64 {
 }
 
 pub async fn download_photo(uri: &MxcUri) -> anyhow::Result<Bytes> {
-    let id = uri.as_str().split("/").last().unwrap();
+    let id = uri.as_str().split(' ').last().unwrap();
     let url = format!("https://kulak.us/_matrix/media/r0/download/kulak.us/{}", id);
 
     // download the image to memory

@@ -25,8 +25,8 @@ async fn on_room_message(event: SyncMessageEvent<MessageEventContent>, room: Roo
     }
 }
 
-async fn handle_message(joined: Joined, message: &String) {
-    if let Some(prompt) = matrix::get_command("show me", &message) {
+async fn handle_message(joined: Joined, message: &str) {
+    if let Some(prompt) = matrix::get_command("show me", message) {
         joined.send(matrix::text_plain("Let's see..."), None).await.unwrap();
 
         let image = match ai::generate_image(prompt).await {

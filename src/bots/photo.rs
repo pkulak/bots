@@ -87,7 +87,7 @@ pub async fn main() -> anyhow::Result<()> {
                         .send(matrix::text_plain(&err.to_string()), None)
                         .await?;
                 } else {
-                    print!("could not run message loop: {}", err.to_string());
+                    print!("could not run message loop: {}", err);
                 }
             }
         };
@@ -317,7 +317,7 @@ impl Bot {
             matrix::get_text_message(event.clone(), room.clone(), client.clone()).await
         {
             // start the auth process
-            if let Some(_) = matrix::get_command("auth", &message) {
+            if matrix::get_command("auth", &message).is_some() {
                 match self.check_auth().await {
                     Ok(_) => joined.send(matrix::text_plain("Looks good!"), None).await?,
                     Err(_) => {
@@ -328,20 +328,20 @@ impl Bot {
                 };
 
             // see what's going on
-            } else if let Some(_) = matrix::get_command("who", &message) {
+            } else if matrix::get_command("who", &message).is_some() {
                 joined
                     .send(matrix::text_plain(&self.recipients_friendly(0)), None)
                     .await?;
 
             // reset the recipients
-            } else if let Some(_) = matrix::get_command("reset", &message) {
+            } else if matrix::get_command("reset", &message).is_some() {
                 self.only = None;
                 joined
                     .send(matrix::text_plain(&self.recipients_friendly(0)), None)
                     .await?;
 
             // help!
-            } else if let Some(_) = matrix::get_command("help", &message) {
+            } else if matrix::get_command("help", &message).is_some() {
                 let text = vec![
                     "who: Show who photos are currently being sent to.",
                     "to mark: Only send photos to Mark.",
@@ -412,7 +412,7 @@ impl Bot {
         {
             let photo = &matrix::download_photo(&uri).await?;
             let jpeg = image::shrink_jpeg(photo)?;
-            self.send_photo(&jpeg, &photo, &info.mimetype.unwrap())
+            self.send_photo(&jpeg, photo, &info.mimetype.unwrap())
                 .await?;
             return Ok(true);
         }
@@ -425,7 +425,7 @@ impl Bot {
                 Some("image/heic") | Some("image/heif") => {
                     let photo = &matrix::download_photo(&uri).await?;
                     let jpeg = image::convert_heic_to_jpeg(photo)?;
-                    self.send_photo(&jpeg, &photo, &info.mimetype.unwrap())
+                    self.send_photo(&jpeg, photo, &info.mimetype.unwrap())
                         .await?;
                     return Ok(true);
                 }
@@ -479,7 +479,7 @@ impl Bot {
         let all = Bot::all_recipients();
         let mut collected: HashSet<String> = HashSet::new();
 
-        for recip in command.split(" ") {
+        for recip in command.split(' ') {
             let r = recip.to_lowercase();
 
             // allow sending to the Google album only
@@ -530,7 +530,7 @@ fn name_case(s: &str) -> String {
 }
 
 fn get_filename(mime_type: &str) -> String {
-    let ext = mime_type.split("/").last().unwrap().to_lowercase();
+    let ext = mime_type.split('/').last().unwrap().to_lowercase();
 
     match ext.as_str() {
         "jpeg" => "photo.jpg".to_string(),

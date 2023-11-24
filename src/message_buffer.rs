@@ -1,4 +1,4 @@
-use std::sync::mpsc::{Receiver};
+use std::sync::mpsc::Receiver;
 
 pub struct MessageBuffer<'a, T> {
     counter: usize,
@@ -47,11 +47,8 @@ impl <'a, T> MessageBuffer<'a, T> {
     }
 
     fn fill(&mut self) {
-        loop {
-            match self.channel.try_recv() {
-                Ok(message) => self.buffer.push(message),
-                Err(_) => break
-            }
+        while let Ok(message) = self.channel.try_recv() {
+            self.buffer.push(message)
         }
     }
 }
