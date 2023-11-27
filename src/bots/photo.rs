@@ -115,7 +115,7 @@ impl Bot {
                     .await?;
 
             // reset the recipients
-            } else if matrix::get_command("reset", &message).is_some() {
+            } else if matrix::find_command(vec!["reset", "to everyone"], &message).is_some() {
                 self.only = None;
                 joined
                     .send(matrix::text_plain(&self.recipients_friendly(0)), None)
