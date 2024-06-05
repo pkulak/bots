@@ -234,6 +234,7 @@ pub fn normalize_sender(sender: UserId, command: &str) -> anyhow::Result<UserId>
 pub fn create_user_id(id: &str) -> anyhow::Result<UserId> {
     let id = id.to_lowercase();
     let id = id.trim();
+    let id = id.trim_end_matches(&['.', '!', '?']);
 
     let id = if id == "dad" {
         UserId::try_from("@phil:kulak.us")?

@@ -115,7 +115,12 @@ impl Bot {
                     .await?;
 
             // reset the recipients
-            } else if matrix::find_command(vec!["reset", "to everyone"], &message).is_some() {
+            } else if matrix::find_command(
+                vec!["reset", "everyone", "to everyone", "send to everyone"],
+                &message,
+            )
+            .is_some()
+            {
                 self.only = None;
                 joined
                     .send(matrix::text_plain(&self.recipients_friendly(0)), None)
@@ -189,10 +194,8 @@ impl Bot {
             let photo = &matrix::download_photo(&uri).await?;
 
             let jpeg = match info.mimetype.as_deref() {
-                Some("image/heic") | Some("image/heif") => {
-                    image::convert_heic_to_jpeg(photo)?
-                }
-                _ => image::shrink_jpeg(photo)?
+                Some("image/heic") | Some("image/heif") => image::convert_heic_to_jpeg(photo)?,
+                _ => image::shrink_jpeg(photo)?,
             };
 
             self.send_photo(&jpeg, photo, &info.mimetype.unwrap())
