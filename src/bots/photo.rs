@@ -90,7 +90,7 @@ struct MessageEvent {
 }
 
 struct Bot {
-    only: Option<HashMap<String, String>>,
+    only: Option<HashMap<String, Vec<String>>>,
 }
 
 impl Bot {
@@ -128,7 +128,7 @@ impl Bot {
 
             // help!
             } else if matrix::get_command("help", &message).is_some() {
-                let text = vec![
+                let text = [
                     "who: Show who photos are currently being sent to.",
                     "to mark: Only send photos to Mark.",
                     "to mark jane: Only send photos to Mark and Jane.",
@@ -136,7 +136,7 @@ impl Bot {
                     "reset: Send photos to everyone.",
                 ];
 
-                let html = vec![
+                let html = [
                     "<ul>",
                     "<li><strong>who</strong>: Show who photos are currently being sent to.</li>",
                     "<li><strong>to mark</strong>: Only send photos to Mark.</li>",
@@ -171,7 +171,7 @@ impl Bot {
             {
                 let recipients = self.command_as_recipients(command)?;
                 let all = Bot::all_recipients();
-                let mut filtered: HashMap<String, String> = HashMap::new();
+                let mut filtered: HashMap<String, Vec<String>> = HashMap::new();
                 for to in &recipients {
                     filtered.insert(to.clone(), all[to].clone());
                 }
@@ -238,18 +238,18 @@ impl Bot {
         photo: &Bytes,
         mime_type: &str,
     ) -> anyhow::Result<()> {
-        send_emails(jpeg, "image/jpeg", self.recipients().values())?;
+        send_emails(jpeg, "image/jpeg", self.recipients().values().flatten())?;
         save_photo(photo, mime_type)?;
 
         Ok(())
     }
 
-    fn all_recipients() -> HashMap<String, String> {
+    fn all_recipients() -> HashMap<String, Vec<String>> {
         let json = env::var("SMTP_TO").expect("SMTP_TO environmental variable not set");
         serde_json::from_str(json.as_str()).unwrap()
     }
 
-    fn recipients(&self) -> HashMap<String, String> {
+    fn recipients(&self) -> HashMap<String, Vec<String>> {
         match self.only.clone() {
             Some(recipients) => recipients,
             None => Bot::all_recipients(),
