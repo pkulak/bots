@@ -26,7 +26,10 @@ async fn on_room_message(event: SyncMessageEvent<MessageEventContent>, room: Roo
 }
 
 async fn handle_message(joined: Joined, message: &str) {
-    if let Some(prompt) = matrix::get_command("show me", message) {
+    if let Some(prompt) = matrix::find_command(
+        vec!["show me", "sherman, show me", "sherman show me"],
+        message,
+    ) {
         joined
             .send(matrix::text_plain("Let's see..."), None)
             .await
@@ -41,6 +44,7 @@ async fn handle_message(joined: Joined, message: &str) {
                     .send(matrix::text_plain("Oh no! I couldn't do it. :("), None)
                     .await
                     .unwrap();
+
                 return;
             }
         };
@@ -49,5 +53,26 @@ async fn handle_message(joined: Joined, message: &str) {
             .send_attachment("image.png", &mime::IMAGE_PNG, &mut image.reader(), None)
             .await
             .unwrap();
+    } else if let Some(prompt) = matrix::find_command(vec!["sherman,", "sherman"], message) {
+        let response = match ai::chat(prompt).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                println!("Error with chat: {}", e);
+
+                joined
+                    .send(matrix::text_plain("I have no words. :("), None)
+                    .await
+                    .unwrap();
+
+                return;
+            }
+        };
+
+        joined
+            .send(matrix::text_plain(&response), None)
+            .await
+            .unwrap();
+
+        return;
     }
 }
