@@ -86,14 +86,12 @@ pub fn shrink_to_jpeg(img: &Bytes, width: u32, height: u32) -> anyhow::Result<By
     println!("encoding as JPEG");
 
     let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
-
     comp.set_size(resized.width() as usize, resized.height() as usize);
-    comp.set_mem_dest();
-    comp.start_compress();
 
-    comp.write_scanlines(resized.as_bytes());
+    let mut comp = comp.start_compress(Vec::new())?;
+    comp.write_scanlines(resized.as_bytes())?;
 
-    comp.finish_compress();
+    let writer = comp.finish()?;
 
-    Ok(Bytes::from(comp.data_to_vec().unwrap()))
+    Ok(Bytes::from(writer))
 }
