@@ -7,7 +7,7 @@ pub struct MessageBuffer<'a, T> {
 }
 
 // todo: this needs to be async
-impl<'a, T> MessageBuffer<'a, T> {
+impl<T> MessageBuffer<'_, T> {
     pub fn new(channel: &Receiver<T>) -> MessageBuffer<T> {
         MessageBuffer {
             counter: 0,

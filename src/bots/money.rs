@@ -24,6 +24,7 @@ use crate::matrix;
 use crate::matrix::text_html;
 
 const MAIN_ROOM: &str = "!hMPITSQBLFEleSJmVm:kulak.us";
+const SAVINGS: [&str; 1] = ["@charlie-savings@kulak.us"];
 
 pub async fn main() -> anyhow::Result<()> {
     let client = matrix::create_client("moneybot").await?;
@@ -341,6 +342,10 @@ impl Bot {
     }
 
     fn id_exists(self: &Bot, user_id: &UserId) -> anyhow::Result<bool> {
+        if SAVINGS.contains(&user_id.as_str()) {
+            return Ok(true);
+        }
+
         let mut stmt = self
             .conn
             .prepare(

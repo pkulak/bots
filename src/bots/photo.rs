@@ -311,7 +311,7 @@ fn name_case(s: &str) -> String {
 }
 
 fn get_filename(mime_type: &str) -> String {
-    let ext = mime_type.split('/').last().unwrap().to_lowercase();
+    let ext = mime_type.split('/').next_back().unwrap().to_lowercase();
 
     match ext.as_str() {
         "jpeg" => "photo.jpg".to_string(),
@@ -320,7 +320,7 @@ fn get_filename(mime_type: &str) -> String {
 }
 
 fn save_photo(photo: &Bytes, mime_type: &str) -> anyhow::Result<()> {
-    let ext = mime_type.split('/').last().unwrap();
+    let ext = mime_type.split('/').next_back().unwrap();
 
     let prefix = SystemTime::now()
         .duration_since(UNIX_EPOCH)

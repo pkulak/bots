@@ -234,7 +234,7 @@ pub fn normalize_sender(sender: UserId, command: &str) -> anyhow::Result<UserId>
 pub fn create_user_id(id: &str) -> anyhow::Result<UserId> {
     let id = id.to_lowercase();
     let id = id.trim();
-    let id = id.trim_end_matches(&['.', '!', '?']);
+    let id = id.trim_end_matches(['.', '!', '?']);
 
     let id = if id == "dad" {
         UserId::try_from("@phil:kulak.us")?
@@ -255,6 +255,10 @@ pub fn pretty_user_id(user_id: &UserId) -> String {
     }
 
     let localpart = &mut user_id.localpart().to_string();
+
+    if localpart.contains('-') {
+        return localpart.to_string();
+    }
 
     if let Some(s) = localpart.get_mut(0..1) {
         s.make_ascii_uppercase()
