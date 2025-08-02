@@ -1,7 +1,11 @@
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use std::env;
+use std::{
+    collections::HashMap,
+    env,
+    sync::{LazyLock, Mutex},
+};
 
 #[derive(Serialize)]
 struct ImageBody<'a> {
@@ -22,7 +26,7 @@ struct ImageResponse {
     data: Vec<Data>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Message {
     role: String,
     content: String,
@@ -44,17 +48,55 @@ struct ChatResponse {
     choices: Vec<Choice>,
 }
 
-pub async fn chat(prompt: &str) -> Result<String> {
+static ALL_CONTEXT: LazyLock<Mutex<HashMap<String, Vec<Message>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn get_context(room: &str, prompt: &str) -> Vec<Message> {
+    let mut context = ALL_CONTEXT.lock().unwrap();
+    let messages = context.entry(room.to_string()).or_insert(vec![Message {
+        role: "developer".to_string(),
+        content: "Respond as concisely as possible, unless asked to expand.".to_string(),
+    }]);
+
+    messages.push(Message {
+        role: "user".to_string(),
+        content: prompt.to_string(),
+    });
+
+    messages.clone()
+}
+
+fn record_response(room: &str, response: String) {
+    let mut context = ALL_CONTEXT.lock().unwrap();
+    let Some(messages) = context.get_mut(room) else {
+        return;
+    };
+
+    messages.push(Message {
+        role: "assistant".to_string(),
+        content: response.to_string(),
+    });
+}
+
+fn cleanup_context(room: &str) {
+    let mut context = ALL_CONTEXT.lock().unwrap();
+    let Some(messages) = context.get_mut(room) else {
+        return;
+    };
+
+    while messages.len() > 10 {
+        messages.remove(1);
+    }
+}
+
+pub async fn chat(room: &str, prompt: &str) -> Result<String> {
     let client = reqwest::Client::new();
 
     let auth = env::var("OPENAI_KEY").expect("OPENAI_KEY environmental variable not set");
 
     let body = MessageList {
-        model: "gpt-4o".to_string(),
-        messages: vec![Message {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        }],
+        model: "gpt-4.1".to_string(),
+        messages: get_context(room, prompt),
     };
 
     let response = client
@@ -73,8 +115,12 @@ pub async fn chat(prompt: &str) -> Result<String> {
     }
 
     let body = response.json::<ChatResponse>().await?;
+    let response = body.choices.first().unwrap().message.content.clone();
 
-    Ok(body.choices.first().unwrap().message.content.clone())
+    record_response(room, response.clone());
+    cleanup_context(room);
+
+    Ok(response)
 }
 
 pub async fn generate_image(prompt: &str) -> Result<Bytes> {

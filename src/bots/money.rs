@@ -8,7 +8,7 @@ use chrono_tz::US::Pacific;
 use futures::executor;
 use matrix_sdk::room::{Joined, Room};
 use matrix_sdk::ruma::events::room::message::MessageEventContent;
-use matrix_sdk::ruma::events::SyncMessageEvent;
+use matrix_sdk::ruma::events::{SyncMessageEvent};
 use matrix_sdk::ruma::{RoomId, UserId};
 use matrix_sdk::{Client, SyncSettings};
 use rusqlite::{params, Connection};

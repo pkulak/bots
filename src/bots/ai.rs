@@ -56,7 +56,7 @@ async fn handle_message(joined: Joined, message: &str) {
             .await
             .unwrap();
     } else if let Some(prompt) = matrix::find_command(vec!["sherman,", "sherman"], message) {
-        let response = match ai::chat(prompt).await {
+        let response = match ai::chat(joined.room_id().localpart(), prompt).await {
             Ok(resp) => resp,
             Err(e) => {
                 println!("Error with chat: {}", e);
@@ -82,7 +82,7 @@ async fn handle_message(joined: Joined, message: &str) {
             return;
         }
 
-        let response = match ai::chat(message).await {
+        let response = match ai::chat(joined.room_id().localpart(), message).await {
             Ok(resp) => resp,
             Err(e) => {
                 println!("Error with chat: {}", e);
