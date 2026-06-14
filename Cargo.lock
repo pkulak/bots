@@ -162,7 +162,6 @@ dependencies = [
  "libheif-rs",
  "libheif-sys",
  "matrix-sdk",
- "mime",
  "mozjpeg",
  "reqwest",
  "rusqlite",

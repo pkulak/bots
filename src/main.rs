@@ -2,7 +2,6 @@ extern crate core;
 
 use std::env;
 
-mod ai;
 mod bots;
 mod image;
 mod matrix;
@@ -15,8 +14,6 @@ async fn main() -> anyhow::Result<()> {
         match bot.as_str() {
             "home" => bots::home::main().await?,
             "money" => bots::money::main().await?,
-            "owen" => bots::owen::main().await?,
-            "ai" => bots::ai::main().await?,
             "photo" => bots::photo::main().await?,
             _ => {
                 println!("unknown bot: {}", bot);
