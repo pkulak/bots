@@ -267,7 +267,7 @@ impl Bot {
         Ok(())
     }
 
-    fn get_balance(self: &Bot, user_id: &UserId) -> anyhow::Result<Money<Currency>> {
+    fn get_balance(self: &Bot, user_id: &UserId) -> anyhow::Result<Money<'_, Currency>> {
         let mut stmt = self.conn.prepare(
             "
                 SELECT COALESCE(SUM(amount), 0)
@@ -291,7 +291,7 @@ impl Bot {
         Ok(Money::from_minor(received - sent, iso::USD))
     }
 
-    fn get_min_balance(self: &Bot, user_id: &UserId) -> rusqlite::Result<Money<Currency>> {
+    fn get_min_balance(self: &Bot, user_id: &UserId) -> rusqlite::Result<Money<'_, Currency>> {
         let mut stmt = self.conn.prepare(
             "
                 SELECT COALESCE(SUM(min_balance), 0)
@@ -478,14 +478,9 @@ impl Bot {
 
         let pretty_id = matrix::pretty_user_id(&receiver);
 
-        if memo.is_some() {
+        if let Some(memo) = memo {
             room.send(
-                text_plain(&format!(
-                    "Sent {} to {} for {}.",
-                    amount,
-                    pretty_id,
-                    memo.unwrap()
-                )),
+                text_plain(&format!("Sent {} to {} for {}.", amount, pretty_id, memo)),
                 None,
             )
             .await?;
