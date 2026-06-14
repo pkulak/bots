@@ -10,10 +10,10 @@ use matrix_sdk::config::SyncSettings;
 use matrix_sdk::ruma::events::room::message::SyncRoomMessageEvent;
 use matrix_sdk::ruma::{OwnedUserId, RoomId, UserId};
 use matrix_sdk::{Client, Room};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use rust_decimal::prelude::ToPrimitive;
 use rusty_money::iso::Currency;
-use rusty_money::{iso, Money};
+use rusty_money::{Money, iso};
 use string_builder::Builder;
 use tokio::task;
 

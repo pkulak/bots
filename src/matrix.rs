@@ -12,8 +12,8 @@ use matrix_sdk::ruma::{MxcUri, OwnedMxcUri, OwnedUserId, ServerName, UserId};
 use matrix_sdk::{Client, Room, RoomState};
 use reqwest::Url;
 use rust_decimal::prelude::*;
-use rusty_money::iso::Currency;
 use rusty_money::Money;
+use rusty_money::iso::Currency;
 use tokio::time;
 use tokio::time::Duration;
 

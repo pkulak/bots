@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use exif::{In, Tag};
-use image::imageops::FilterType;
 use image::ImageReader;
+use image::imageops::FilterType;
 use image::{DynamicImage, ImageBuffer, Rgb};
 use std::io::Cursor;
 
@@ -26,40 +26,39 @@ pub fn shrink_jpeg(image: &Bytes) -> anyhow::Result<Bytes> {
         .decode()?;
 
     // rotate, if needed
-    if let Ok(exif) = exif::Reader::new().read_from_container(&mut Cursor::new(image.to_vec())) {
-        if let Some(orientation) = exif.get_field(Tag::Orientation, In::PRIMARY) {
-            if let Some(o) = orientation.value.get_uint(0) {
-                println!("Orientation: {}", o);
+    if let Ok(exif) = exif::Reader::new().read_from_container(&mut Cursor::new(image.to_vec()))
+        && let Some(orientation) = exif.get_field(Tag::Orientation, In::PRIMARY)
+        && let Some(o) = orientation.value.get_uint(0)
+    {
+        println!("Orientation: {}", o);
 
-                match o {
-                    1 => {} // correct
-                    2 => {
-                        decoded = decoded.flipv();
-                    }
-                    3 => {
-                        decoded = decoded.rotate180();
-                    }
-                    4 => {
-                        decoded = decoded.fliph();
-                    }
-                    5 => {
-                        decoded = decoded.rotate90();
-                        decoded = decoded.flipv();
-                    }
-                    6 => {
-                        decoded = decoded.rotate90();
-                    }
-                    7 => {
-                        decoded = decoded.rotate270();
-                        decoded = decoded.flipv();
-                    }
-                    8 => {
-                        decoded = decoded.rotate270();
-                    }
-                    _ => {}
-                };
+        match o {
+            1 => {} // correct
+            2 => {
+                decoded = decoded.flipv();
             }
-        }
+            3 => {
+                decoded = decoded.rotate180();
+            }
+            4 => {
+                decoded = decoded.fliph();
+            }
+            5 => {
+                decoded = decoded.rotate90();
+                decoded = decoded.flipv();
+            }
+            6 => {
+                decoded = decoded.rotate90();
+            }
+            7 => {
+                decoded = decoded.rotate270();
+                decoded = decoded.flipv();
+            }
+            8 => {
+                decoded = decoded.rotate270();
+            }
+            _ => {}
+        };
     }
 
     let width = decoded.width();
