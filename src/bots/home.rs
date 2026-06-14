@@ -1,7 +1,6 @@
-use matrix_sdk::room::Room;
-use matrix_sdk::ruma::events::room::message::MessageEventContent;
-use matrix_sdk::ruma::events::SyncMessageEvent;
-use matrix_sdk::{Client, SyncSettings};
+use matrix_sdk::config::SyncSettings;
+use matrix_sdk::ruma::events::room::message::SyncRoomMessageEvent;
+use matrix_sdk::{Client, Room};
 use std::time::Duration;
 
 use crate::matrix;
@@ -10,15 +9,13 @@ use crate::webhook;
 pub async fn main() -> anyhow::Result<()> {
     let client = matrix::create_client("homebot").await?;
 
-    client.register_event_handler(on_room_message).await;
-
-    let settings = SyncSettings::default().token(client.sync_token().await.unwrap());
-    client.sync(settings).await;
+    client.add_event_handler(on_room_message);
+    client.sync(SyncSettings::default()).await?;
 
     Ok(())
 }
 
-async fn on_room_message(event: SyncMessageEvent<MessageEventContent>, room: Room, client: Client) {
+async fn on_room_message(event: SyncRoomMessageEvent, room: Room, client: Client) {
     if let Some((joined, _, message)) = matrix::get_text_message(event, room, client).await {
         handle_message(&message).await;
 
@@ -44,10 +41,9 @@ async fn on_room_message(event: SyncMessageEvent<MessageEventContent>, room: Roo
                 || unit.contains("year")
             {
                 joined
-                    .send(
-                        matrix::text_plain("Sorry, only minutes are supported right now"),
-                        None,
-                    )
+                    .send(matrix::text_plain(
+                        "Sorry, only minutes are supported right now",
+                    ))
                     .await
                     .unwrap();
                 return;
@@ -65,10 +61,7 @@ async fn on_room_message(event: SyncMessageEvent<MessageEventContent>, room: Roo
                 format!("See you in {} minutes!", minutes)
             };
 
-            joined
-                .send(matrix::text_plain(&response), None)
-                .await
-                .unwrap();
+            joined.send(matrix::text_plain(&response)).await.unwrap();
             tokio::time::sleep(Duration::from_secs(minutes * 60)).await;
             handle_message(&command.join(" ")).await;
         }

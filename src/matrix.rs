@@ -1,21 +1,15 @@
 use bytes::Bytes;
 use std::env;
 
-use matrix_sdk::room::Joined;
-use matrix_sdk::room::Room;
-use matrix_sdk::ruma::events::room::member::MemberEventContent;
-use matrix_sdk::ruma::events::room::message::MessageType;
-use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
+use matrix_sdk::config::SyncSettings;
+use matrix_sdk::ruma::events::room::member::StrippedRoomMemberEvent;
 use matrix_sdk::ruma::events::room::message::{
-    FileInfo, FileMessageEventContent, ImageMessageEventContent, MessageEventContent,
+    FileInfo, FileMessageEventContent, ImageMessageEventContent, MessageType,
+    RoomMessageEventContent, SyncRoomMessageEvent, TextMessageEventContent,
 };
-use matrix_sdk::ruma::events::room::ImageInfo;
-use matrix_sdk::ruma::events::AnyMessageEventContent;
-use matrix_sdk::ruma::events::StrippedStateEvent;
-use matrix_sdk::ruma::events::SyncMessageEvent;
-use matrix_sdk::ruma::{MxcUri, ServerName, UserId};
-use matrix_sdk::ClientConfig;
-use matrix_sdk::{Client, SyncSettings};
+use matrix_sdk::ruma::events::room::{ImageInfo, MediaSource};
+use matrix_sdk::ruma::{MxcUri, OwnedMxcUri, OwnedUserId, ServerName, UserId};
+use matrix_sdk::{Client, Room, RoomState};
 use reqwest::Url;
 use rust_decimal::prelude::*;
 use rusty_money::iso::Currency;
@@ -24,99 +18,75 @@ use tokio::time;
 use tokio::time::Duration;
 
 pub async fn get_text_message(
-    event: SyncMessageEvent<MessageEventContent>,
+    event: SyncRoomMessageEvent,
     room: Room,
     client: Client,
-) -> Option<(Joined, UserId, String)> {
-    if let Room::Joined(room) = room {
-        if let SyncMessageEvent {
-            content:
-                MessageEventContent {
-                    msgtype: MessageType::Text(TextMessageEventContent { body, .. }),
-                    ..
-                },
-            sender,
-            ..
-        } = event
-        {
-            if sender.eq(&client.user_id().await.unwrap()) {
-                None
-            } else {
-                Some((room, sender, body))
-            }
-        } else {
-            Option::None
-        }
+) -> Option<(Room, OwnedUserId, String)> {
+    if room.state() != RoomState::Joined {
+        return None;
+    }
+
+    let event = event.as_original()?;
+    let MessageType::Text(TextMessageEventContent { body, .. }) = &event.content.msgtype else {
+        return None;
+    };
+
+    if event.sender.as_str() == client.user_id()?.as_str() {
+        None
     } else {
-        Option::None
+        Some((room, event.sender.clone(), body.clone()))
     }
 }
 
 pub async fn get_image_message(
-    event: SyncMessageEvent<MessageEventContent>,
+    event: SyncRoomMessageEvent,
     room: Room,
     client: Client,
-) -> Option<(Joined, UserId, MxcUri, Box<ImageInfo>)> {
-    if let Room::Joined(room) = room {
-        if let SyncMessageEvent {
-            content:
-                MessageEventContent {
-                    msgtype:
-                        MessageType::Image(ImageMessageEventContent {
-                            url: Some(uri),
-                            info: Some(info),
-                            ..
-                        }),
-                    ..
-                },
-            sender,
-            ..
-        } = event
-        {
-            if sender.eq(&client.user_id().await.unwrap()) {
-                None
-            } else {
-                Some((room, sender, uri, info))
-            }
-        } else {
-            Option::None
-        }
+) -> Option<(Room, OwnedUserId, OwnedMxcUri, Box<ImageInfo>)> {
+    if room.state() != RoomState::Joined {
+        return None;
+    }
+
+    let event = event.as_original()?;
+    let MessageType::Image(ImageMessageEventContent {
+        source: MediaSource::Plain(uri),
+        info: Some(info),
+        ..
+    }) = &event.content.msgtype
+    else {
+        return None;
+    };
+
+    if event.sender.as_str() == client.user_id()?.as_str() {
+        None
     } else {
-        Option::None
+        Some((room, event.sender.clone(), uri.clone(), info.clone()))
     }
 }
 
 pub async fn get_file_message(
-    event: SyncMessageEvent<MessageEventContent>,
+    event: SyncRoomMessageEvent,
     room: Room,
     client: Client,
-) -> Option<(Joined, UserId, MxcUri, Box<FileInfo>)> {
-    if let Room::Joined(room) = room {
-        if let SyncMessageEvent {
-            content:
-                MessageEventContent {
-                    msgtype:
-                        MessageType::File(FileMessageEventContent {
-                            url: Some(uri),
-                            info: Some(info),
-                            ..
-                        }),
-                    ..
-                },
-            sender,
-            ..
-        } = event
-        {
-            if sender.eq(&client.user_id().await.unwrap()) {
-                None
-            } else {
-                Some((room, sender, uri, info))
-            }
-        } else {
-            Option::None
-        }
+) -> Option<(Room, OwnedUserId, OwnedMxcUri, Box<FileInfo>)> {
+    if room.state() != RoomState::Joined {
+        return None;
+    }
+
+    let event = event.as_original()?;
+    let MessageType::File(FileMessageEventContent {
+        source: MediaSource::Plain(uri),
+        info: Some(info),
+        ..
+    }) = &event.content.msgtype
+    else {
+        return None;
+    };
+
+    if event.sender.as_str() == client.user_id()?.as_str() {
+        None
     } else {
-        Option::None
+        Some((room, event.sender.clone(), uri.clone(), info.clone()))
     }
 }
 
@@ -149,20 +119,16 @@ pub fn get_command<'a>(prefix: &str, message: &'a str) -> Option<&'a str> {
     Option::None
 }
 
-async fn on_room_invitation(
-    room_member: StrippedStateEvent<MemberEventContent>,
-    client: Client,
-    room: Room,
-) {
-    if room_member.state_key != client.user_id().await.unwrap() {
+async fn on_room_invitation(room_member: StrippedRoomMemberEvent, client: Client, room: Room) {
+    if room_member.state_key.as_str() != client.user_id().unwrap().as_str() {
         return;
     }
 
-    if let Room::Invited(room) = room {
+    if room.state() == RoomState::Invited {
         println!("Autojoining room {}", room.room_id());
         let mut delay = 2;
 
-        while let Err(err) = room.accept_invitation().await {
+        while let Err(err) = room.join().await {
             // retry autojoin due to synapse sending invites, before the
             // invited user can join for more information see
             // https://github.com/matrix-org/synapse/issues/4345
@@ -197,31 +163,37 @@ pub async fn create_client(bot_name: &str) -> anyhow::Result<Client> {
 
     println!("saving configuration to {:?}", config);
 
-    let client_config = ClientConfig::new().store_path(config);
     let homeserver_url = Url::parse(&homeserver).expect("invalid homeserver url");
-    let client = Client::new_with_config(homeserver_url, client_config).unwrap();
+    let client = Client::builder()
+        .homeserver_url(homeserver_url.as_str())
+        .sqlite_store(config, None)
+        .build()
+        .await?;
 
     client
-        .login(&username, &password, None, Some(bot_name))
+        .matrix_auth()
+        .login_username(&username, &password)
+        .initial_device_display_name(bot_name)
+        .send()
         .await?;
 
     println!("logged in as {}", username);
 
-    client.sync_once(SyncSettings::default()).await.unwrap();
-    client.register_event_handler(on_room_invitation).await;
+    client.sync_once(SyncSettings::default()).await?;
+    client.add_event_handler(on_room_invitation);
 
     Ok(client)
 }
 
-pub fn text_plain(message: &str) -> impl Into<AnyMessageEventContent> {
-    AnyMessageEventContent::RoomMessage(MessageEventContent::text_plain(message))
+pub fn text_plain(message: &str) -> RoomMessageEventContent {
+    RoomMessageEventContent::text_plain(message)
 }
 
-pub fn text_html(plain: &str, html: &str) -> impl Into<AnyMessageEventContent> {
-    AnyMessageEventContent::RoomMessage(MessageEventContent::text_html(plain, html))
+pub fn text_html(plain: &str, html: &str) -> RoomMessageEventContent {
+    RoomMessageEventContent::text_html(plain, html)
 }
 
-pub fn normalize_sender(sender: UserId, command: &str) -> anyhow::Result<UserId> {
+pub fn normalize_sender(sender: OwnedUserId, command: &str) -> anyhow::Result<OwnedUserId> {
     let sender = if !command.is_empty() {
         create_user_id(command)?
     } else {
@@ -231,15 +203,15 @@ pub fn normalize_sender(sender: UserId, command: &str) -> anyhow::Result<UserId>
     Ok(sender)
 }
 
-pub fn create_user_id(id: &str) -> anyhow::Result<UserId> {
+pub fn create_user_id(id: &str) -> anyhow::Result<OwnedUserId> {
     let id = id.to_lowercase();
     let id = id.trim();
     let id = id.trim_end_matches(['.', '!', '?']);
 
     let id = if id == "dad" {
-        UserId::try_from("@phil:kulak.us")?
+        OwnedUserId::try_from("@phil:kulak.us")?
     } else if id == "mom" {
-        UserId::try_from("@gwen:kulak.us")?
+        OwnedUserId::try_from("@gwen:kulak.us")?
     } else {
         UserId::parse_with_server_name(id, <&ServerName>::try_from("kulak.us")?)?
     };
@@ -268,12 +240,12 @@ pub fn pretty_user_id(user_id: &UserId) -> String {
 }
 
 pub fn is_admin(user_id: &UserId) -> bool {
-    user_id.as_ref().eq_ignore_ascii_case("@phil:kulak.us")
-        || user_id.as_ref().eq_ignore_ascii_case("@gwen:kulak.us")
+    user_id.as_str().eq_ignore_ascii_case("@phil:kulak.us")
+        || user_id.as_str().eq_ignore_ascii_case("@gwen:kulak.us")
 }
 
 pub fn money_to_i64(money: &Money<Currency>) -> i64 {
-    (money.clone() * 100isize).amount().to_i64().unwrap()
+    (*money.amount() * Decimal::from(100)).to_i64().unwrap()
 }
 
 pub async fn download_photo(uri: &MxcUri) -> anyhow::Result<Bytes> {

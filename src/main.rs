@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 extern crate core;
 
 use std::env;

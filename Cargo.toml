@@ -6,26 +6,24 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-reqwest = { version = "0.11", features = ["json"] }
-rusqlite = { version = "0.27.0", features = ["bundled"] }
-rusty-money = { version = "0.4.0", features = ["iso"] }
-matrix-sdk = { version = "0.4", features = [] }
+reqwest = { version = "0.13", features = ["json"] }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+rusty-money = { version = "0.5.0", features = ["iso"] }
+matrix-sdk = { version = "0.18", features = [] }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 
 anyhow = "1.0"
-bytes = "1.1.0"
+bytes = "1.11.1"
 chrono = "0.4"
-chrono-tz = "0.6"
-dirs = "4.0"
-kamadak-exif = "0.5.5"
+chrono-tz = "0.10"
+dirs = "6.0"
+kamadak-exif = "0.6.1"
 futures = "0.3"
-image = "0.24.5"
-lettre = "0.10"
-libheif-rs = "0.15.1"
-libheif-sys = "= 1.12.0"
-mozjpeg = "0.10.10"
+image = "0.25.10"
+lettre = "0.11"
+libheif-rs = "2.7.0"
+mozjpeg = "0.10.13"
 serde_json = "1.0"
 string-builder = "0.2.0"
-rust_decimal = "1.23"
-tokio-cron-scheduler = "*"
+rust_decimal = "1.42"

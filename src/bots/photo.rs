@@ -10,10 +10,9 @@ use bytes::Bytes;
 use lettre::message::{Attachment, Body, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
-use matrix_sdk::room::Room;
-use matrix_sdk::ruma::events::room::message::MessageEventContent;
-use matrix_sdk::ruma::events::SyncMessageEvent;
-use matrix_sdk::{Client, SyncSettings};
+use matrix_sdk::config::SyncSettings;
+use matrix_sdk::ruma::events::room::message::SyncRoomMessageEvent;
+use matrix_sdk::{Client, Room, RoomState};
 use tokio::task;
 
 use crate::image;
@@ -25,24 +24,20 @@ pub async fn main() -> anyhow::Result<()> {
     let client = matrix::create_client("photobot").await?;
     let mut bot = Bot::new();
 
-    client
-        .clone()
-        .register_event_handler({
-            move |event: SyncMessageEvent<MessageEventContent>, room: Room| {
-                let tx = tx.clone();
-                async move {
-                    tx.send(MessageEvent { event, room }).unwrap();
-                }
+    client.clone().add_event_handler({
+        move |event: SyncRoomMessageEvent, room: Room| {
+            let tx = tx.clone();
+            async move {
+                tx.send(MessageEvent { event, room }).unwrap();
             }
-        })
-        .await;
+        }
+    });
 
     task::spawn({
         let client = client.clone();
 
         async move {
-            let settings = SyncSettings::default().token(client.sync_token().await.unwrap());
-            client.sync(settings).await;
+            client.sync(SyncSettings::default()).await.unwrap();
         }
     });
 
@@ -63,19 +58,14 @@ pub async fn main() -> anyhow::Result<()> {
 
                 let total = buffer.get_final_count();
 
-                if total > 0 {
-                    if let Room::Joined(joined) = room {
-                        joined
-                            .send(matrix::text_plain(&bot.recipients_friendly(total)), None)
-                            .await?;
-                    }
+                if total > 0 && room.state() == RoomState::Joined {
+                    room.send(matrix::text_plain(&bot.recipients_friendly(total)))
+                        .await?;
                 }
             }
             Err(err) => {
-                if let Room::Joined(joined) = room {
-                    joined
-                        .send(matrix::text_plain(&err.to_string()), None)
-                        .await?;
+                if room.state() == RoomState::Joined {
+                    room.send(matrix::text_plain(&err.to_string())).await?;
                 } else {
                     print!("could not run message loop: {}", err);
                 }
@@ -85,7 +75,7 @@ pub async fn main() -> anyhow::Result<()> {
 }
 
 struct MessageEvent {
-    event: SyncMessageEvent<MessageEventContent>,
+    event: SyncRoomMessageEvent,
     room: Room,
 }
 
@@ -100,7 +90,7 @@ impl Bot {
 
     async fn on_room_message(
         &mut self,
-        event: SyncMessageEvent<MessageEventContent>,
+        event: SyncRoomMessageEvent,
         room: Room,
         client: Client,
     ) -> anyhow::Result<bool> {
@@ -111,7 +101,7 @@ impl Bot {
             // see what's going on
             if matrix::get_command("who", &message).is_some() {
                 joined
-                    .send(matrix::text_plain(&self.recipients_friendly(0)), None)
+                    .send(matrix::text_plain(&self.recipients_friendly(0)))
                     .await?;
 
             // reset the recipients
@@ -123,7 +113,7 @@ impl Bot {
             {
                 self.only = None;
                 joined
-                    .send(matrix::text_plain(&self.recipients_friendly(0)), None)
+                    .send(matrix::text_plain(&self.recipients_friendly(0)))
                     .await?;
 
             // help!
@@ -147,7 +137,7 @@ impl Bot {
                 ];
 
                 joined
-                    .send(matrix::text_html(&text.join("\n"), &html.join("\n")), None)
+                    .send(matrix::text_html(&text.join("\n"), &html.join("\n")))
                     .await?;
 
             // skip some recipients
@@ -160,7 +150,7 @@ impl Bot {
                 self.only = Some(filtered.clone());
 
                 joined
-                    .send(matrix::text_plain(&self.recipients_friendly(0)), None)
+                    .send(matrix::text_plain(&self.recipients_friendly(0)))
                     .await?;
 
                 println!("only sending to {:?}", self.only);
@@ -178,7 +168,7 @@ impl Bot {
                 self.only = Some(filtered.clone());
 
                 joined
-                    .send(matrix::text_plain(&self.recipients_friendly(0)), None)
+                    .send(matrix::text_plain(&self.recipients_friendly(0)))
                     .await?;
 
                 println!("only sending to {:?}", self.only);
@@ -220,10 +210,9 @@ impl Bot {
                 }
                 _ => {
                     joined
-                        .send(
-                            matrix::text_plain("I don't know what to do with that file. :("),
-                            None,
-                        )
+                        .send(matrix::text_plain(
+                            "I don't know what to do with that file. :(",
+                        ))
                         .await?;
                 }
             };

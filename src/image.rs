@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use exif::{In, Tag};
 use image::imageops::FilterType;
-use image::io::Reader as ImageReader;
+use image::ImageReader;
 use image::{DynamicImage, ImageBuffer, Rgb};
 use std::io::Cursor;
 
-use libheif_rs::{ColorSpace, HeifContext, RgbChroma};
+use libheif_rs::{ColorSpace, HeifContext, LibHeif, RgbChroma};
 
 extern crate image;
 
@@ -14,7 +14,7 @@ pub fn convert_heic_to_jpeg(image: &Bytes) -> anyhow::Result<Bytes> {
 
     let ctx = HeifContext::read_from_bytes(image)?;
     let handle = ctx.primary_image_handle()?;
-    let decoded = handle.decode(ColorSpace::Rgb(RgbChroma::Rgb), false)?;
+    let decoded = LibHeif::new().decode(&handle, ColorSpace::Rgb(RgbChroma::Rgb), None)?;
     let data = Bytes::copy_from_slice(decoded.planes().interleaved.unwrap().data);
 
     shrink_to_jpeg(&data, handle.width(), handle.height())

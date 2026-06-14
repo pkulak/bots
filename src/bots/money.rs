@@ -3,14 +3,13 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow;
-use chrono::{DateTime, Datelike, Duration, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use chrono_tz::US::Pacific;
 use futures::executor;
-use matrix_sdk::room::{Joined, Room};
-use matrix_sdk::ruma::events::room::message::MessageEventContent;
-use matrix_sdk::ruma::events::{SyncMessageEvent};
-use matrix_sdk::ruma::{RoomId, UserId};
-use matrix_sdk::{Client, SyncSettings};
+use matrix_sdk::config::SyncSettings;
+use matrix_sdk::ruma::events::room::message::SyncRoomMessageEvent;
+use matrix_sdk::ruma::{OwnedUserId, RoomId, UserId};
+use matrix_sdk::{Client, Room};
 use rusqlite::{params, Connection};
 use rust_decimal::prelude::ToPrimitive;
 use rusty_money::iso::Currency;
@@ -30,20 +29,22 @@ pub async fn main() -> anyhow::Result<()> {
     let client = matrix::create_client("moneybot").await?;
     let bot = Arc::new(Mutex::new(Bot::new()?));
 
-    client
-        .register_event_handler({
+    client.add_event_handler({
+        let bot = bot.clone();
+
+        move |event: SyncRoomMessageEvent, room: Room, client: Client| {
             let bot = bot.clone();
 
-            move |event: SyncMessageEvent<MessageEventContent>, room: Room, client: Client| {
-                let bot = bot.clone();
-
+            async move {
                 task::spawn_blocking(move || {
                     executor::block_on(bot.lock().unwrap().on_room_message(event, room, client))
                         .expect("could not run message handler");
                 })
+                .await
+                .unwrap();
             }
-        })
-        .await;
+        }
+    });
 
     // manage weekly allowance
     task::spawn({
@@ -59,14 +60,13 @@ pub async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let settings = SyncSettings::default().token(client.sync_token().await.unwrap());
-    client.sync(settings).await;
+    client.sync(SyncSettings::default()).await?;
 
     Ok(())
 }
 
 async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Result<()> {
-    let now = Pacific.timestamp_millis(chrono::Utc::now().timestamp_millis());
+    let now = chrono::Utc::now().with_timezone(&Pacific);
 
     let chase: i64 = env::var("CHASE")
         .expect("CHASE environmental variable not set")
@@ -100,7 +100,7 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
 
     tokio::time::sleep(duration.to_std().unwrap()).await;
 
-    let room_id = RoomId::try_from(MAIN_ROOM)?;
+    let room_id = <&RoomId>::try_from(MAIN_ROOM)?;
 
     {
         let bot = bot.lock().unwrap();
@@ -118,20 +118,19 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
         )?;
     }
 
-    client
-        .room_send(
-            &room_id,
-            text_plain(
-                format!(
-                    "Sent {} to Chase and {} to Charlie.",
-                    Money::from_minor(chase, iso::USD),
-                    Money::from_minor(charlie, iso::USD)
-                )
-                .as_str(),
-            ),
-            None,
+    let room = client
+        .get_room(room_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown room: {}", room_id))?;
+
+    room.send(text_plain(
+        format!(
+            "Sent {} to Chase and {} to Charlie.",
+            Money::from_minor(chase, iso::USD),
+            Money::from_minor(charlie, iso::USD)
         )
-        .await?;
+        .as_str(),
+    ))
+    .await?;
 
     // sleep for a tad just to make sure we cycle over
     tokio::time::sleep(Duration::minutes(1).to_std().unwrap()).await;
@@ -151,7 +150,7 @@ struct Transaction {
 #[derive(Clone)]
 struct BalanceTransaction<'a> {
     balance: Money<'a, Currency>,
-    user: Option<UserId>,
+    user: Option<OwnedUserId>,
     amount: Money<'a, Currency>,
     date: DateTime<chrono_tz::Tz>,
     memo: Option<String>,
@@ -366,7 +365,7 @@ impl Bot {
 
     async fn on_room_message(
         self: &Bot,
-        event: SyncMessageEvent<MessageEventContent>,
+        event: SyncRoomMessageEvent,
         room: Room,
         client: Client,
     ) -> anyhow::Result<()> {
@@ -390,20 +389,20 @@ impl Bot {
 
     async fn on_balance_message(
         self: &Bot,
-        room: Joined,
-        sender: UserId,
+        room: Room,
+        sender: OwnedUserId,
         command: &str,
     ) -> anyhow::Result<()> {
         let sender = matrix::normalize_sender(sender, command)?;
         let balance = self.get_balance(&sender)?;
-        room.send(text_plain(&format!("{}", balance)), None).await?;
+        room.send(text_plain(&format!("{}", balance))).await?;
         Ok(())
     }
 
     async fn on_send_message(
         self: &Bot,
-        room: Joined,
-        sender: UserId,
+        room: Room,
+        sender: OwnedUserId,
         command: &str,
     ) -> anyhow::Result<()> {
         let args: Vec<&str> = command
@@ -422,46 +421,44 @@ impl Bot {
         } else if let Ok(amount) = Money::from_str(args[1], iso::USD) {
             (matrix::create_user_id(args[0])?, amount)
         } else {
-            room.send(text_plain("Please use a valid amount."), None)
-                .await?;
+            room.send(text_plain("Please use a valid amount.")).await?;
             return Ok(());
         };
 
         if amount.is_negative() && !matrix::is_admin(&sender) {
-            room.send(
-                text_plain("You are not allowed to take money, only send it."),
-                None,
-            )
+            room.send(text_plain(
+                "You are not allowed to take money, only send it.",
+            ))
             .await?;
             return Ok(());
         }
 
         if amount.is_zero() {
-            room.send(text_plain("Wait... what's the point of that?"), None)
+            room.send(text_plain("Wait... what's the point of that?"))
                 .await?;
             return Ok(());
         }
 
-        if (self.get_balance(&sender)? - amount.clone()) < self.get_min_balance(&sender)? {
-            room.send(text_plain("You don't have enough money!"), None)
+        let remaining = self.get_balance(&sender)?.sub(amount)?;
+        if remaining.amount() < self.get_min_balance(&sender)?.amount() {
+            room.send(text_plain("You don't have enough money!"))
                 .await?;
             return Ok(());
         }
 
         if !self.id_exists(&receiver)? && !matrix::is_admin(&sender) {
-            room.send(
-                text_plain(&format!("{} isn't a valid user.", receiver.localpart())),
-                None,
-            )
+            room.send(text_plain(&format!(
+                "{} isn't a valid user.",
+                receiver.localpart()
+            )))
             .await?;
             return Ok(());
         }
 
         if sender == receiver {
-            room.send(
-                text_plain("So... you want to send money to yourself, from yourself?"),
-                None,
-            )
+            room.send(text_plain(
+                "So... you want to send money to yourself, from yourself?",
+            ))
             .await?;
             return Ok(());
         }
@@ -479,17 +476,14 @@ impl Bot {
         let pretty_id = matrix::pretty_user_id(&receiver);
 
         if let Some(memo) = memo {
-            room.send(
-                text_plain(&format!("Sent {} to {} for {}.", amount, pretty_id, memo)),
-                None,
-            )
+            room.send(text_plain(&format!(
+                "Sent {} to {} for {}.",
+                amount, pretty_id, memo
+            )))
             .await?;
         } else {
-            room.send(
-                text_plain(&format!("Sent {} to {}.", amount, pretty_id)),
-                None,
-            )
-            .await?;
+            room.send(text_plain(&format!("Sent {} to {}.", amount, pretty_id)))
+                .await?;
         };
 
         Ok(())
@@ -497,23 +491,20 @@ impl Bot {
 
     async fn on_set_min_balance_message(
         self: &Bot,
-        room: Joined,
-        sender: UserId,
+        room: Room,
+        sender: OwnedUserId,
         command: &str,
     ) -> anyhow::Result<()> {
         if !matrix::is_admin(&sender) {
-            room.send(
-                text_plain("You are not allowed to set minimum balances."),
-                None,
-            )
-            .await?;
+            room.send(text_plain("You are not allowed to set minimum balances."))
+                .await?;
             return Ok(());
         }
 
         let args: Vec<&str> = command.split(' ').collect();
 
         if args.len() != 2 {
-            room.send(text_plain("Usage: set min [user] [amount]."), None)
+            room.send(text_plain("Usage: set min [user] [amount]."))
                 .await?;
             return Ok(());
         }
@@ -523,7 +514,7 @@ impl Bot {
         let amount = match Money::from_str(args[1], iso::USD) {
             Ok(amount) => amount,
             Err(_) => {
-                room.send(text_plain(&format!("Invalid amount: {}", args[1])), None)
+                room.send(text_plain(&format!("Invalid amount: {}", args[1])))
                     .await?;
                 return Ok(());
             }
@@ -531,14 +522,11 @@ impl Bot {
 
         self.set_min_balance(&user_id, matrix::money_to_i64(&amount))?;
 
-        room.send(
-            text_plain(&format!(
-                "Set minimum balance for {} to {}",
-                matrix::pretty_user_id(&user_id),
-                amount
-            )),
-            None,
-        )
+        room.send(text_plain(&format!(
+            "Set minimum balance for {} to {}",
+            matrix::pretty_user_id(&user_id),
+            amount
+        )))
         .await?;
 
         Ok(())
@@ -546,29 +534,28 @@ impl Bot {
 
     async fn on_get_min_balance_message(
         self: &Bot,
-        room: Joined,
+        room: Room,
         command: &str,
     ) -> anyhow::Result<()> {
         let args: Vec<&str> = command.split(' ').collect();
 
         if args.len() != 1 {
-            room.send(text_plain("Usage: get min [user]."), None)
-                .await?;
+            room.send(text_plain("Usage: get min [user].")).await?;
             return Ok(());
         }
 
         let user_id = matrix::create_user_id(args[0])?;
         let min = self.get_min_balance(&user_id)?;
 
-        room.send(text_plain(&format!("{}", min)), None).await?;
+        room.send(text_plain(&format!("{}", min))).await?;
 
         Ok(())
     }
 
     async fn on_ledger_message(
         self: &Bot,
-        room: Joined,
-        sender: UserId,
+        room: Room,
+        sender: OwnedUserId,
         command: &str,
     ) -> anyhow::Result<()> {
         let user_id = {
@@ -597,14 +584,12 @@ impl Bot {
                 };
 
                 let transaction = BalanceTransaction {
-                    balance: running_balance.clone(),
+                    balance: *running_balance,
                     user: user.map(|l| matrix::create_user_id(&l).unwrap()),
                     amount: Money::from_minor(amount, iso::USD),
-                    date: Pacific.timestamp_millis(
-                        DateTime::<Utc>::from_str(&tr.date)
-                            .unwrap()
-                            .timestamp_millis(),
-                    ),
+                    date: DateTime::<Utc>::from_str(&tr.date)
+                        .unwrap()
+                        .with_timezone(&Pacific),
                     memo: tr.memo,
                 };
 
@@ -638,9 +623,6 @@ impl Bot {
             ));
         }
 
-        let pacific_time = Pacific.ymd(1990, 5, 6).and_hms(12, 30, 45);
-        pacific_time.with_timezone(&Pacific);
-
         html_builder.append("</table>");
 
         // and our text
@@ -658,7 +640,7 @@ impl Bot {
                     "On {} you sent {} {}{}.",
                     tr.date.format("%b %d"),
                     tr.user.map(|u| matrix::pretty_user_id(&u)).unwrap(),
-                    tr.amount * -1,
+                    tr.amount.mul(-1)?,
                     memo
                 ));
             } else {
@@ -674,16 +656,13 @@ impl Bot {
         }
 
         if command.to_lowercase().contains("plain") {
-            room.send(text_plain(&txt_builder.string().unwrap()), None)
+            room.send(text_plain(&txt_builder.string().unwrap()))
                 .await?;
         } else {
-            room.send(
-                text_html(
-                    &txt_builder.string().unwrap(),
-                    &html_builder.string().unwrap(),
-                ),
-                None,
-            )
+            room.send(text_html(
+                &txt_builder.string().unwrap(),
+                &html_builder.string().unwrap(),
+            ))
             .await?;
         }
 
