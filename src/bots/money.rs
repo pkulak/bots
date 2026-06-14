@@ -3,6 +3,10 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use anyhow;
+use axum::extract::{Path, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use chrono_tz::US::Pacific;
 use futures::executor;
@@ -14,6 +18,7 @@ use rusqlite::{Connection, params};
 use rust_decimal::prelude::ToPrimitive;
 use rusty_money::iso::Currency;
 use rusty_money::{Money, iso};
+use serde::Deserialize;
 use string_builder::Builder;
 use tokio::task;
 
@@ -60,6 +65,18 @@ pub async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // serve the HTTP API
+    task::spawn({
+        let client = client.clone();
+        let bot = bot.clone();
+
+        async move {
+            if let Err(e) = serve_api(client, bot).await {
+                println!("Could not serve HTTP API! {}", e);
+            }
+        }
+    });
+
     client.sync(SyncSettings::default()).await?;
 
     Ok(())
@@ -100,8 +117,6 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
 
     tokio::time::sleep(duration.to_std().unwrap()).await;
 
-    let room_id = <&RoomId>::try_from(MAIN_ROOM)?;
-
     {
         let bot = bot.lock().unwrap();
         bot.send(
@@ -118,24 +133,166 @@ async fn manage_allowance(client: &Client, bot: &Arc<Mutex<Bot>>) -> anyhow::Res
         )?;
     }
 
-    let room = client
-        .get_room(room_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown room: {}", room_id))?;
-
-    room.send(text_plain(
-        format!(
-            "Sent {} to Chase and {} to Charlie.",
+    notify_room(
+        client,
+        &format!(
+            "Sent {} to Chase and {} to Charlie from Dad.",
             Money::from_minor(chase, iso::USD),
             Money::from_minor(charlie, iso::USD)
-        )
-        .as_str(),
-    ))
+        ),
+    )
     .await?;
 
     // sleep for a tad just to make sure we cycle over
     tokio::time::sleep(Duration::minutes(1).to_std().unwrap()).await;
 
     Ok(())
+}
+
+#[derive(Clone)]
+struct ApiState {
+    bot: Arc<Mutex<Bot>>,
+    client: Client,
+    token: String,
+}
+
+async fn serve_api(client: Client, bot: Arc<Mutex<Bot>>) -> anyhow::Result<()> {
+    let token = env::var("API_TOKEN").expect("API_TOKEN environmental variable not set");
+    let addr = env::var("API_ADDR").unwrap_or_else(|_| "0.0.0.0:8386".to_string());
+
+    let app = Router::new()
+        .route("/transfer", post(transfer))
+        .route("/balance/{user}", get(balance))
+        .with_state(ApiState { bot, client, token });
+
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    println!("HTTP API listening on {}", addr);
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+fn check_auth(headers: &HeaderMap, token: &str) -> Result<(), (StatusCode, String)> {
+    let provided = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+
+    if provided == Some(token) {
+        Ok(())
+    } else {
+        Err((StatusCode::UNAUTHORIZED, "unauthorized".to_string()))
+    }
+}
+
+async fn notify_room(client: &Client, message: &str) -> anyhow::Result<()> {
+    let room_id = <&RoomId>::try_from(MAIN_ROOM)?;
+    let room = client
+        .get_room(room_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown room: {}", room_id))?;
+
+    room.send(text_plain(message)).await?;
+
+    Ok(())
+}
+
+fn transfer_note(
+    from: &UserId,
+    to: &UserId,
+    amount: &Money<Currency>,
+    memo: Option<&str>,
+) -> String {
+    let note = format!(
+        "Sent {} to {} from {}",
+        amount,
+        matrix::pretty_user_id(to),
+        matrix::pretty_user_id(from)
+    );
+
+    match memo {
+        Some(memo) => format!("{} for {}.", note, memo),
+        None => format!("{}.", note),
+    }
+}
+
+#[derive(Deserialize)]
+struct TransferRequest {
+    from: String,
+    to: String,
+    amount: String,
+    memo: Option<String>,
+}
+
+async fn transfer(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(req): Json<TransferRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    check_auth(&headers, &state.token)?;
+
+    let from =
+        matrix::create_user_id(&req.from).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let to =
+        matrix::create_user_id(&req.to).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let amount = Money::from_str(&req.amount, iso::USD).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid amount: {}", req.amount),
+        )
+    })?;
+
+    if amount.is_zero() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "amount must not be zero".to_string(),
+        ));
+    }
+
+    {
+        let bot = state.bot.lock().unwrap();
+        bot.send(
+            from.as_str(),
+            to.as_str(),
+            matrix::money_to_i64(&amount),
+            req.memo.as_deref(),
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    let note = transfer_note(&from, &to, &amount, req.memo.as_deref());
+
+    notify_room(&state.client, &note)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "from": from.as_str(),
+        "to": to.as_str(),
+        "amount": amount.to_string(),
+    })))
+}
+
+async fn balance(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(user): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    check_auth(&headers, &state.token)?;
+
+    let user_id =
+        matrix::create_user_id(&user).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let balance = {
+        let bot = state.bot.lock().unwrap();
+        bot.get_balance(&user_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .to_string()
+    };
+
+    Ok(Json(serde_json::json!({
+        "user": user_id.as_str(),
+        "balance": balance,
+    })))
 }
 
 #[derive(Clone)]
@@ -473,18 +630,8 @@ impl Bot {
             memo: memo.clone(),
         })?;
 
-        let pretty_id = matrix::pretty_user_id(&receiver);
-
-        if let Some(memo) = memo {
-            room.send(text_plain(&format!(
-                "Sent {} to {} for {}.",
-                amount, pretty_id, memo
-            )))
-            .await?;
-        } else {
-            room.send(text_plain(&format!("Sent {} to {}.", amount, pretty_id)))
-                .await?;
-        };
+        let note = transfer_note(&sender, &receiver, &amount, memo.as_deref());
+        room.send(text_plain(&note)).await?;
 
         Ok(())
     }
